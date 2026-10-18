@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var takeout = TakeoutModel()
     @State private var google = GoogleAccountModel()
     @State private var transfer: TransferModel?
+    @State private var takeoutImport: ImportModel?
 
     var body: some View {
         HSplitView {
@@ -13,8 +14,10 @@ struct ContentView: View {
                 transfer = TransferModel(album: album)
             }
             .frame(minWidth: 340, maxWidth: .infinity)
-            TakeoutPane(model: takeout)
-                .frame(minWidth: 340, maxWidth: .infinity)
+            TakeoutPane(model: takeout, canImport: apple.hasAccess) { album in
+                takeoutImport = ImportModel(album: album)
+            }
+            .frame(minWidth: 340, maxWidth: .infinity)
         }
         .frame(minWidth: 720, minHeight: 480)
         .toolbar {
@@ -25,6 +28,9 @@ struct ContentView: View {
         .task { await google.start() }
         .sheet(item: $transfer) { transfer in
             TransferSheet(model: transfer, google: google)
+        }
+        .sheet(item: $takeoutImport) { takeoutImport in
+            ImportSheet(model: takeoutImport)
         }
     }
 }

@@ -52,7 +52,7 @@ public struct TransferProgress: Sendable, Equatable {
     public var fractionCompleted: Double { total == 0 ? 1 : Double(completed) / Double(total) }
 }
 
-public struct TransferFailure: Sendable, Equatable, Identifiable {
+public struct TransferFailure: Sendable, Hashable, Identifiable {
     public var id: String { itemID }
     public var itemID: String
     public var fileName: String

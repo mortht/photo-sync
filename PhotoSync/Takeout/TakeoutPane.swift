@@ -3,7 +3,15 @@ import SwiftUI
 
 struct TakeoutPane: View {
     @Bindable var model: TakeoutModel
+    /// Whether Photos access was granted.
+    let canImport: Bool
+    let onImport: (TakeoutAlbum) -> Void
     @State private var isPickingFolder = false
+    @State private var selection: TakeoutAlbum.ID?
+
+    private var selectedAlbum: TakeoutAlbum? {
+        model.library?.albums.first { $0.id == selection }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +29,19 @@ struct TakeoutPane: View {
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.library?.albums.isEmpty == false && !model.isScanning {
+                Divider()
+                HStack {
+                    Spacer()
+                    Button("Copy to Apple Photos…") {
+                        if let selectedAlbum { onImport(selectedAlbum) }
+                    }
+                    .disabled(selectedAlbum == nil || !canImport)
+                    .help(canImport ? "Import the selected album into a new Apple Photos album"
+                                    : "Allow Photos access first")
+                }
+                .padding(8)
+            }
         }
         .fileImporter(isPresented: $isPickingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
@@ -56,7 +77,7 @@ struct TakeoutPane: View {
     }
 
     private var albumList: some View {
-        List {
+        List(selection: $selection) {
             section("Albums", model.albums)
             section("Photos by Year", model.years)
             section("Other", model.other)
@@ -76,6 +97,10 @@ struct TakeoutPane: View {
                         warning: Self.warning(for: album)
                     ) {
                         SymbolArtwork(systemName: Self.symbol(for: album.kind))
+                    }
+                    .contextMenu {
+                        Button("Copy to Apple Photos…") { onImport(album) }
+                            .disabled(!canImport)
                     }
                 }
             }

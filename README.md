@@ -5,9 +5,10 @@ albums between **iCloud Photos** and **Google Photos**: connect both
 accounts, browse albums on each side, and copy an album across.
 
 > Status: early development. The album browser lists Apple Photos albums
-> (including Shared Albums) and scanned Google Takeout exports, and copies
-> Apple albums to new Google Photos albums. Google → Apple import is not
-> implemented yet. See the [roadmap](#roadmap).
+> (including Shared Albums) and scanned Google Takeout exports. It copies
+> Apple albums to new Google Photos albums and imports Takeout albums into
+> Apple Photos. Picker import and incremental sync are next. See the
+> [roadmap](#roadmap).
 
 ## Platform constraints
 
@@ -50,20 +51,20 @@ PhotoSyncCore/            Swift package, platform-independent, unit-tested
     Takeout/              Takeout scanner, sidecar matcher, metadata parsing
     Google/               OAuth (PKCE + loopback redirect), Keychain token store,
                           Photos Library API client with retry/backoff
-    Transfer/             Album uploader (export → upload → batchCreate)
+    Transfer/             Album uploader (export → upload → batchCreate),
+                          Takeout album importer, image metadata writer
   Tests/PhotoSyncCoreTests/
 PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
-  Apple/                  PhotoKit adapter, exporter and Apple album pane
+  Apple/                  PhotoKit adapter, exporter, import destination, album pane
   Google/                 Google account model and toolbar control
   Takeout/                Takeout folder pane
-  Transfer/               Transfer sheet and its model
+  Transfer/               Transfer and import sheets and their models
   Shared/                 Shared views
 PhotoSync.xcodeproj       App project, depends on the local PhotoSyncCore package
 Config/                   Build settings, Info.plist keys, entitlements, OAuth secrets
 ```
 
-To come in `PhotoSyncCore`: the Picker REST client, the Takeout importer
-and the sync state store.
+To come in `PhotoSyncCore`: the Picker REST client and the sync state store.
 
 ### Apple → Google transfer
 
@@ -81,6 +82,24 @@ backoff. A 401 triggers one token refresh. Failed items are listed at the
 end rather than aborting the transfer. Running a transfer again currently
 creates a second album; incremental sync comes with the sync store.
 
+### Takeout → Apple import
+
+Select a scanned Takeout album and choose *Copy to Apple Photos…*. The
+importer creates a new album with the same name, then adds each item with
+`PHAssetCreationRequest` in capture-date order. It restores:
+
+- **capture date** (`photoTakenTime`), **location** and **favorite** from the sidecar
+- **Live Photos** as photo + paired video. If Photos rejects the pair (the
+  files' content identifiers don't match), both halves are imported
+  separately and the item is listed under "Imported with notes".
+- **edited copies**: the edited version (default), the original, or both
+- **descriptions** as captions. PhotoKit can't set captions directly, so the
+  description is written into a copy of the file as XMP `dc:description` /
+  IPTC caption (lossless, JPEG/PNG/TIFF). ImageIO can't write HEIC metadata
+  in place, so HEIC items with a description import without it, with a note.
+
+Importing the same album twice adds duplicates; incremental sync will fix that.
+
 ### Takeout sidecar matching
 
 `TakeoutScanner` accepts any folder that contains an extracted export: a
@@ -95,7 +114,8 @@ can put an album's media and its sidecars in different parts.
 - duplicate numbering: `IMG(1).jpg` ↔ `IMG.jpg(1).json`
 - edited copies (`IMG-edited.jpg`, localized, e.g. `-bearbeitet`), which share
   the original's sidecar and are grouped with it
-- sidecars without the media extension (`IMG.json`)
+- sidecars without the media extension (`IMG.json`), including items uploaded
+  without one (`3806.jpg` ↔ `3806.supplemental-metadata.json`)
 - the sidecar's `title` (original file name) as a last resort
 
 The scanner also pairs Live Photos (`IMG_1234.HEIC` + `IMG_1234.MOV`), reads
@@ -150,7 +170,7 @@ after 7 days, so you'll need to reconnect about once a week.
 - [x] Takeout scanner and sidecar matcher, with unit tests
 - [x] PhotoKit album listing in the UI (albums, folders, Shared Albums)
 - [x] Google OAuth and Apple → Google album transfer
-- [ ] Takeout → Apple import
+- [x] Takeout → Apple import
 - [ ] Picker API import
 - [ ] Incremental sync and polish
 

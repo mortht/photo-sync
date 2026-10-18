@@ -48,52 +48,23 @@ struct TransferSheet: View {
     }
 
     private var running: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if case .preparing = model.phase {
-                ProgressView("Preparing…")
-            } else {
-                ProgressView(value: model.progress.fractionCompleted) {
-                    Text("\(model.progress.completed) of \(model.progress.total) items")
-                } currentValueLabel: {
-                    Text(model.progress.currentFileName ?? " ")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            HStack {
-                if model.progress.failed > 0 {
-                    Label("\(model.progress.failed) failed", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.caption)
-                }
-                Spacer()
-                Button("Stop") { model.cancel() }
-            }
-        }
+        TransferProgressSection(progress: model.progress, isPreparing: {
+            if case .preparing = model.phase { true } else { false }
+        }(), onStop: model.cancel)
     }
 
     private func finished(_ report: TransferReport) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(
-                "Added \(report.addedItems.count) of \(model.progress.total) items to “\(report.album.title)”.",
-                systemImage: report.failures.isEmpty && !report.wasCancelled
-                    ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            TransferResultLabel(
+                text: "Added \(report.addedItems.count) of \(model.progress.total) items to “\(report.album.title)”.",
+                isComplete: report.failures.isEmpty && !report.wasCancelled
             )
-            .foregroundStyle(report.failures.isEmpty && !report.wasCancelled ? .green : .orange)
             if report.wasCancelled {
                 Text("The transfer was stopped. Items not yet added were skipped.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if !report.failures.isEmpty {
-                List(report.failures) { failure in
-                    VStack(alignment: .leading) {
-                        Text(failure.fileName)
-                        Text(failure.message).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .frame(height: 160)
-            }
+            TransferIssueList(title: "Failed", issues: report.failures)
             HStack {
                 if let url = report.album.productUrl {
                     Link("Open in Google Photos", destination: url)
@@ -106,15 +77,6 @@ struct TransferSheet: View {
     }
 
     private func failed(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(message, systemImage: "xmark.octagon.fill")
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
+        TransferErrorView(message: message) { dismiss() }
     }
 }
