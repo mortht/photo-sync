@@ -50,6 +50,11 @@ final class MockHTTPClient: HTTPClient, @unchecked Sendable {
         try respond(Recorded(request: request, uploadedFile: fileURL))
     }
 
+    /// Answers like `data(for:)` / `upload(for:)`, without recording; for composing fakes.
+    func data(for request: URLRequest, uploadedFile: URL?) throws -> Reply {
+        try handler(Recorded(request: request, uploadedFile: uploadedFile))
+    }
+
     private func respond(_ recorded: Recorded) throws -> (Data, HTTPURLResponse) {
         lock.withLock { _requests.append(recorded) }
         let reply = try handler(recorded)

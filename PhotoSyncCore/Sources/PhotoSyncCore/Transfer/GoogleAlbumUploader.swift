@@ -42,13 +42,15 @@ public struct TransferProgress: Sendable, Equatable {
     /// Items added to the album.
     public var added = 0
     public var failed = 0
+    /// Items skipped because an earlier run already copied them.
+    public var skipped = 0
     public var currentFileName: String?
 
     public init(total: Int) {
         self.total = total
     }
 
-    public var completed: Int { added + failed }
+    public var completed: Int { added + failed + skipped }
     public var fractionCompleted: Double { total == 0 ? 1 : Double(completed) / Double(total) }
 }
 
@@ -64,10 +66,12 @@ public struct TransferReport: Sendable, Equatable {
     /// Source item ID → Google media item ID, for the sync store.
     public var addedItems: [String: String]
     public var failures: [TransferFailure]
+    /// Items already copied by an earlier run.
+    public var skippedCount: Int
     public var wasCancelled: Bool
 }
 
-/// Copies a list of items into a new Google Photos album: export → upload →
+/// Copies a list of items into a Google Photos album: export → upload →
 /// `batchCreate` in batches of up to 50. Item failures are collected rather
 /// than aborting the whole transfer.
 public struct GoogleAlbumUploader: Sendable {
@@ -89,10 +93,23 @@ public struct GoogleAlbumUploader: Sendable {
         _ items: [TransferItem],
         toNewAlbumTitled title: String,
         from source: some TransferSource,
+        ledger: (any SyncLedger)? = nil,
         progress: @Sendable (TransferProgress) -> Void = { _ in }
     ) async throws -> TransferReport {
         let album = try await client.createAlbum(title: title)
+        return try await transfer(items, into: album, from: source, ledger: ledger, progress: progress)
+    }
 
+    /// Copies items into an existing app-created album. With a `ledger`,
+    /// items it already contains are skipped and new ones are recorded as
+    /// soon as Google confirms them.
+    public func transfer(
+        _ items: [TransferItem],
+        into album: GoogleAlbum,
+        from source: some TransferSource,
+        ledger: (any SyncLedger)? = nil,
+        progress: @Sendable (TransferProgress) -> Void = { _ in }
+    ) async throws -> TransferReport {
         var state = TransferProgress(total: items.count)
         var added: [String: String] = [:]
         var failures: [TransferFailure] = []
@@ -104,7 +121,7 @@ public struct GoogleAlbumUploader: Sendable {
             state.failed += 1
         }
 
-        func flush() async {
+        func flush() async throws {
             guard !pending.isEmpty else { return }
             let batch = pending
             pending.removeAll()
@@ -115,11 +132,14 @@ public struct GoogleAlbumUploader: Sendable {
                     case .created(let mediaItemID):
                         added[entry.item.id] = mediaItemID
                         state.added += 1
+                        try await ledger?.record(itemID: entry.item.id, contentHash: nil, destinationIDs: [mediaItemID])
                     case .failed(let message):
                         failures.append(TransferFailure(itemID: entry.item.id, fileName: entry.item.fileName, message: message))
                         state.failed += 1
                     }
                 }
+            } catch let error as SyncStoreError {
+                throw error
             } catch {
                 batch.forEach { fail($0.item, error) }
             }
@@ -131,6 +151,10 @@ public struct GoogleAlbumUploader: Sendable {
             if Task.isCancelled {
                 wasCancelled = true
                 break
+            }
+            if let ledger, try await ledger.contains(itemID: item.id) {
+                state.skipped += 1
+                continue
             }
             state.currentFileName = item.fileName
             progress(state)
@@ -150,13 +174,14 @@ public struct GoogleAlbumUploader: Sendable {
                 fail(item, error)
             }
 
-            if pending.count >= batchSize { await flush() }
+            if pending.count >= batchSize { try await flush() }
         }
-        if !wasCancelled { await flush() }
+        if !wasCancelled { try await flush() }
 
         state.currentFileName = nil
         progress(state)
-        return TransferReport(album: album, addedItems: added, failures: failures, wasCancelled: wasCancelled)
+        return TransferReport(album: album, addedItems: added, failures: failures, skippedCount: state.skipped,
+                              wasCancelled: wasCancelled)
     }
 
     private static func message(for error: any Error) -> String {

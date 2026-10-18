@@ -15,7 +15,16 @@ final class FakeLibrary: PhotoLibraryDestination, @unchecked Sendable {
     private var _albums: [String] = []
     private var _imports: [AssetImportRequest] = []
 
+    private var _deletedAlbums: Set<String> = []
+
     var albums: [String] { lock.withLock { _albums } }
+
+    /// Simulates the user deleting an album in Photos.
+    func deleteAlbum(id: String) { lock.withLock { _ = _deletedAlbums.insert(id) } }
+
+    func albumExists(id: String) async -> Bool {
+        lock.withLock { _albums.contains { "album-\($0)" == id } && !_deletedAlbums.contains(id) }
+    }
     var imports: [AssetImportRequest] { lock.withLock { _imports } }
 
     func createAlbum(title: String) async throws -> String {

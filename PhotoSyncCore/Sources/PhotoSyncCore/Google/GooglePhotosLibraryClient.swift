@@ -62,6 +62,16 @@ public struct GooglePhotosLibraryClient: Sendable {
         return try JSONDecoder().decode(GoogleAlbum.self, from: await send(request))
     }
 
+    /// An album the app created earlier, or `nil` if it no longer exists.
+    public func album(id: String) async throws -> GoogleAlbum? {
+        let request = URLRequest(url: Self.baseURL.appending(path: "albums").appending(path: id))
+        do {
+            return try JSONDecoder().decode(GoogleAlbum.self, from: await send(request))
+        } catch let error as GoogleAPIError where error.statusCode == 404 || error.statusCode == 400 {
+            return nil
+        }
+    }
+
     /// Uploads the file's bytes and returns an upload token (valid for one day).
     public func uploadFile(at fileURL: URL, fileName: String, mimeType: String) async throws -> String {
         var request = URLRequest(url: Self.baseURL.appending(path: "uploads"))

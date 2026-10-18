@@ -37,6 +37,8 @@ public struct AssetImportRequest: Sendable, Equatable {
 public protocol PhotoLibraryDestination: Sendable {
     /// Creates an album and returns its identifier.
     func createAlbum(title: String) async throws -> String
+    /// Whether an album created earlier still exists.
+    func albumExists(id: String) async -> Bool
     /// Creates the asset in the album and returns the new asset's identifier.
     func importAsset(_ request: AssetImportRequest, intoAlbum albumID: String) async throws -> String
 }
@@ -49,6 +51,8 @@ public struct ImportReport: Sendable, Equatable {
     public var failures: [TransferFailure]
     /// Items that were imported with something missing.
     public var warnings: [TransferFailure]
+    /// Library items skipped because an earlier run already imported them.
+    public var skippedCount: Int
     public var wasCancelled: Bool
 
     public var importedCount: Int { importedItems.values.reduce(0) { $0 + $1.count } }
@@ -74,16 +78,59 @@ public struct TakeoutAlbumImporter: Sendable {
         title: String,
         into destination: some PhotoLibraryDestination,
         options: TakeoutImportOptions = TakeoutImportOptions(),
+        ledger: (any SyncLedger)? = nil,
         progress: @Sendable (TransferProgress) -> Void = { _ in }
     ) async throws -> ImportReport {
         let albumID = try await destination.createAlbum(title: title)
-        var report = ImportReport(albumID: albumID, albumTitle: title, importedItems: [:], failures: [],
-                                  warnings: [], wasCancelled: false)
+        return try await importAlbum(album, intoAlbumID: albumID, albumTitle: title, into: destination,
+                                     options: options, ledger: ledger, progress: progress)
+    }
+
+    /// Imports into an existing album. With a `ledger`, assets it already
+    /// knows (by Takeout ID or by file content) are skipped, and each new
+    /// asset is recorded right after it is imported.
+    public func importAlbum(
+        _ album: TakeoutAlbum,
+        intoAlbumID albumID: String,
+        albumTitle: String,
+        into destination: some PhotoLibraryDestination,
+        options: TakeoutImportOptions = TakeoutImportOptions(),
+        ledger: (any SyncLedger)? = nil,
+        progress: @Sendable (TransferProgress) -> Void = { _ in }
+    ) async throws -> ImportReport {
+        var report = ImportReport(albumID: albumID, albumTitle: albumTitle, importedItems: [:], failures: [],
+                                  warnings: [], skippedCount: 0, wasCancelled: false)
         var state = TransferProgress(total: Self.itemCount(of: album, options: options))
         progress(state)
 
         for asset in album.assets {
-            for planned in Self.plannedFiles(for: asset, policy: options.editedVersions) {
+            if Task.isCancelled {
+                report.wasCancelled = true
+                break
+            }
+            let plannedFiles = Self.plannedFiles(for: asset, policy: options.editedVersions)
+
+            var contentHash: String?
+            if let ledger {
+                var known = try await ledger.contains(itemID: asset.id)
+                if !known {
+                    // A re-export may name the same file differently, e.g. `IMG(1).jpg`.
+                    contentHash = try? ContentHash.sha256(of: asset.primaryFile)
+                    if let contentHash, try await ledger.contains(contentHash: contentHash) {
+                        try await ledger.record(itemID: asset.id, contentHash: contentHash, destinationIDs: [])
+                        known = true
+                    }
+                }
+                if known {
+                    state.skipped += plannedFiles.count
+                    report.skippedCount += plannedFiles.count
+                    progress(state)
+                    continue
+                }
+            }
+
+            var importedIDs: [String] = []
+            for planned in plannedFiles {
                 if Task.isCancelled {
                     report.wasCancelled = true
                     break
@@ -96,9 +143,9 @@ public struct TakeoutAlbumImporter: Sendable {
                                                                  directoryHint: .isDirectory)
                 defer { try? FileManager.default.removeItem(at: workDirectory) }
                 do {
-                    let ids = try await importFile(planned, of: asset, options: options, workDirectory: workDirectory,
-                                                   into: destination, albumID: albumID, report: &report)
-                    report.importedItems[asset.id, default: []].append(contentsOf: ids)
+                    importedIDs += try await importFile(planned, of: asset, options: options,
+                                                        workDirectory: workDirectory, into: destination,
+                                                        albumID: albumID, report: &report)
                     state.added += 1
                 } catch is CancellationError {
                     report.wasCancelled = true
@@ -109,6 +156,11 @@ public struct TakeoutAlbumImporter: Sendable {
                     state.failed += 1
                 }
                 progress(state)
+            }
+
+            if !importedIDs.isEmpty {
+                report.importedItems[asset.id] = importedIDs
+                try await ledger?.record(itemID: asset.id, contentHash: contentHash, destinationIDs: importedIDs)
             }
             if report.wasCancelled { break }
         }
