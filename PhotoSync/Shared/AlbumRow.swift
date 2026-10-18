@@ -11,9 +11,9 @@ struct AlbumRow<Artwork: View>: View {
     @ViewBuilder let artwork: () -> Artwork
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: AlbumRowLayout.spacing) {
             artwork()
-                .frame(width: 44, height: 44)
+                .frame(width: AlbumRowLayout.artworkSize, height: AlbumRowLayout.artworkSize)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -36,6 +36,9 @@ struct AlbumRow<Artwork: View>: View {
             }
         }
         .padding(.vertical, 2)
+        // Start the row separator under the title. Otherwise the list aligns it
+        // to the badge's text and only a short piece shows on the right.
+        .alignmentGuide(.listRowSeparatorLeading) { _ in AlbumRowLayout.titleInset }
     }
 
     static func countSummary(photos: Int, videos: Int) -> String {
@@ -44,6 +47,13 @@ struct AlbumRow<Artwork: View>: View {
         if videos > 0 { parts.append("\(videos) \(videos == 1 ? "video" : "videos")") }
         return parts.joined(separator: ", ")
     }
+}
+
+enum AlbumRowLayout {
+    nonisolated static let artworkSize: CGFloat = 44
+    nonisolated static let spacing: CGFloat = 10
+    /// Where the title starts, and so where the row separator should start.
+    nonisolated static let titleInset = artworkSize + spacing
 }
 
 /// What an album row shows about its sync history.
