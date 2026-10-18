@@ -35,7 +35,7 @@ struct ImportSheet: View {
                             .help("These items keep the date stored in the file; their location can't be restored.")
                     }
                 }
-                SyncTargetSection(preview: model.preview, totalItems: model.album.assets.count,
+                SyncTargetSection(preview: model.preview, previewError: model.previewError, totalItems: model.album.assets.count,
                                   titleLabel: "Apple Photos album name", title: $model.targetTitle,
                                   forceNewAlbum: $model.forceNewAlbum)
                 if model.hasEditedCopies {

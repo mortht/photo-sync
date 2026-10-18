@@ -42,23 +42,15 @@ public struct AppleToGoogleSync: Sendable {
         uploader: GoogleAlbumUploader? = nil,
         progress: @Sendable (TransferProgress) -> Void = { _ in }
     ) async throws -> TransferReport {
-        var album: GoogleAlbum?
-        if !forceNewAlbum, let pair = try await store.pair(direction: .appleToGoogle, sourceAlbumID: sourceAlbumID) {
-            album = try await client.album(id: pair.destinationAlbumID)
-        }
-        let target: GoogleAlbum
-        if let album {
-            target = album
-        } else {
-            target = try await client.createAlbum(title: newAlbumTitle)
-        }
-        let pair = try await store.linkPair(direction: .appleToGoogle, sourceAlbumID: sourceAlbumID,
-                                            sourceAlbumTitle: sourceAlbumTitle, destinationAlbumID: target.id,
-                                            destinationAlbumTitle: target.title)
+        let target = try await SyncTarget.resolve(
+            store: store, direction: .appleToGoogle, sourceAlbumID: sourceAlbumID,
+            sourceAlbumTitle: sourceAlbumTitle, forceNewAlbum: forceNewAlbum,
+            existing: { try await client.album(id: $0.destinationAlbumID) },
+            create: { try await client.createAlbum(title: newAlbumTitle) },
+            identity: { ($0.id, $0.title) })
         let report = try await (uploader ?? GoogleAlbumUploader(client: client)).transfer(
-            items, into: target, from: source, ledger: AlbumSyncLedger(store: store, pairID: pair.id),
-            progress: progress)
-        if !report.wasCancelled { try await store.markSynced(pairID: pair.id) }
+            items, into: target.album, from: source, ledger: target.ledger, progress: progress)
+        try await target.complete(wasCancelled: report.wasCancelled)
         return report
     }
 }
@@ -92,22 +84,85 @@ public struct TakeoutToAppleSync: Sendable {
         options: TakeoutImportOptions = TakeoutImportOptions(),
         progress: @Sendable (TransferProgress) -> Void = { _ in }
     ) async throws -> ImportReport {
-        var target: (id: String, title: String)?
-        if !forceNewAlbum, let pair = try await store.pair(direction: .takeoutToApple, sourceAlbumID: album.id),
-           await destination.albumExists(id: pair.destinationAlbumID) {
-            target = (pair.destinationAlbumID, pair.destinationAlbumTitle)
-        }
-        if target == nil {
-            target = (try await destination.createAlbum(title: newAlbumTitle), newAlbumTitle)
-        }
-        let (albumID, albumTitle) = target!
-        let pair = try await store.linkPair(direction: .takeoutToApple, sourceAlbumID: album.id,
-                                            sourceAlbumTitle: album.title, destinationAlbumID: albumID,
-                                            destinationAlbumTitle: albumTitle)
+        let target = try await SyncTarget.resolve(
+            store: store, direction: .takeoutToApple, sourceAlbumID: album.id, sourceAlbumTitle: album.title,
+            forceNewAlbum: forceNewAlbum, destination: destination, newAlbumTitle: newAlbumTitle)
         let report = try await importer.importAlbum(
-            album, intoAlbumID: albumID, albumTitle: albumTitle, into: destination, options: options,
-            ledger: AlbumSyncLedger(store: store, pairID: pair.id), progress: progress)
-        if !report.wasCancelled { try await store.markSynced(pairID: pair.id) }
+            album, intoAlbumID: target.album.id, albumTitle: target.album.title, into: destination,
+            options: options, ledger: target.ledger, progress: progress)
+        try await target.complete(wasCancelled: report.wasCancelled)
         return report
+    }
+}
+
+/// An album in the photo library, as stored in a sync pair.
+struct LibraryAlbum {
+    var id: String
+    var title: String
+}
+
+/// The destination of one sync run and its ledger. Encodes the rule shared by
+/// all directions: reuse the album linked to the source while it exists
+/// (unless a new one is forced), otherwise create one and relink.
+struct SyncTarget<Album> {
+    let store: SyncStore
+    let pair: SyncPair
+    let album: Album
+
+    var ledger: AlbumSyncLedger { AlbumSyncLedger(store: store, pairID: pair.id) }
+
+    static func resolve(
+        store: SyncStore,
+        direction: SyncDirection,
+        sourceAlbumID: String,
+        sourceAlbumTitle: String,
+        forceNewAlbum: Bool,
+        existing: (SyncPair) async throws -> Album?,
+        create: () async throws -> Album,
+        identity: (Album) -> (id: String, title: String)
+    ) async throws -> SyncTarget {
+        var album: Album?
+        if !forceNewAlbum, let pair = try await store.pair(direction: direction, sourceAlbumID: sourceAlbumID) {
+            album = try await existing(pair)
+        }
+        let target: Album
+        if let album {
+            target = album
+        } else {
+            target = try await create()
+        }
+        let (id, title) = identity(target)
+        let pair = try await store.linkPair(direction: direction, sourceAlbumID: sourceAlbumID,
+                                            sourceAlbumTitle: sourceAlbumTitle, destinationAlbumID: id,
+                                            destinationAlbumTitle: title)
+        return SyncTarget(store: store, pair: pair, album: target)
+    }
+
+    /// Records the sync time unless the run was stopped early.
+    func complete(wasCancelled: Bool) async throws {
+        if !wasCancelled { try await store.markSynced(pairID: pair.id) }
+    }
+}
+
+extension SyncTarget where Album == LibraryAlbum {
+    /// Resolves an album in a `PhotoLibraryDestination`.
+    static func resolve(
+        store: SyncStore,
+        direction: SyncDirection,
+        sourceAlbumID: String,
+        sourceAlbumTitle: String,
+        forceNewAlbum: Bool,
+        destination: any PhotoLibraryDestination,
+        newAlbumTitle: String
+    ) async throws -> SyncTarget {
+        try await resolve(
+            store: store, direction: direction, sourceAlbumID: sourceAlbumID, sourceAlbumTitle: sourceAlbumTitle,
+            forceNewAlbum: forceNewAlbum,
+            existing: { pair in
+                await destination.albumExists(id: pair.destinationAlbumID)
+                    ? LibraryAlbum(id: pair.destinationAlbumID, title: pair.destinationAlbumTitle) : nil
+            },
+            create: { LibraryAlbum(id: try await destination.createAlbum(title: newAlbumTitle), title: newAlbumTitle) },
+            identity: { ($0.id, $0.title) })
     }
 }

@@ -52,6 +52,9 @@ struct PickerImportSheet: View {
                 LabeledContent("Picked", value: AlbumRow<EmptyView>.countSummary(
                     photos: model.photoCount, videos: model.videoCount))
                 TextField("Apple Photos album name", text: $model.albumTitle)
+                if let previewError = model.previewError {
+                    SyncHistoryErrorRow(message: previewError)
+                }
                 if model.preview.existingAlbumTitle != nil {
                     LabeledContent("Synced before") {
                         Text(model.preview.summary(totalItems: model.items.count))

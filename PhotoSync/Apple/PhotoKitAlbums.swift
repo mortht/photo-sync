@@ -86,15 +86,59 @@ enum ThumbnailLoader {
         // Shared album items usually live only in iCloud.
         options.isNetworkAccessAllowed = true
         let pixels = pointSize * 2
-        return await withCheckedContinuation { continuation in
-            PHImageManager.default().requestImage(
-                for: asset,
-                targetSize: CGSize(width: pixels, height: pixels),
-                contentMode: .aspectFill,
-                options: options
-            ) { image, _ in
-                continuation.resume(returning: image.map(ThumbnailImage.init))
+        let request = ImageRequest()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                request.start(continuation) {
+                    PHImageManager.default().requestImage(
+                        for: asset,
+                        targetSize: CGSize(width: pixels, height: pixels),
+                        contentMode: .aspectFill,
+                        options: options
+                    ) { image, _ in
+                        request.finish(image.map(ThumbnailImage.init))
+                    }
+                }
             }
+        } onCancel: {
+            // The row scrolled away: stop the (possibly iCloud) download.
+            request.cancel()
+        }
+    }
+
+    /// Resumes the continuation exactly once, whether the image arrives or the
+    /// task is cancelled first.
+    private final class ImageRequest: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<ThumbnailImage?, Never>?
+        private var requestID: PHImageRequestID?
+        private var isCancelled = false
+
+        func start(_ continuation: CheckedContinuation<ThumbnailImage?, Never>, _ request: () -> PHImageRequestID) {
+            let cancelledEarly = lock.withLock {
+                self.continuation = continuation
+                return isCancelled
+            }
+            if cancelledEarly { return finish(nil) }
+            let id = request()
+            lock.withLock { requestID = id }
+        }
+
+        func finish(_ image: ThumbnailImage?) {
+            let continuation = lock.withLock {
+                defer { self.continuation = nil }
+                return self.continuation
+            }
+            continuation?.resume(returning: image)
+        }
+
+        func cancel() {
+            let id = lock.withLock {
+                isCancelled = true
+                return requestID
+            }
+            if let id { PHImageManager.default().cancelImageRequest(id) }
+            finish(nil)
         }
     }
 }

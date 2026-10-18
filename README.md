@@ -4,11 +4,31 @@ A native macOS app (Swift + SwiftUI) that transfers and syncs whole photo
 albums between **iCloud Photos** and **Google Photos**: connect both
 accounts, browse albums on each side, and copy an album across.
 
-> Status: early development. The album browser lists Apple Photos albums
-> (including Shared Albums) and scanned Google Takeout exports. It copies
-> Apple albums to new Google Photos albums and imports Takeout albums into
-> Apple Photos (from Takeout or the Google Photos Picker), adding only new
-> items when an album is copied again. See the [roadmap](#roadmap).
+> Status: early development, all roadmap steps working. It copies Apple
+> Photos albums (including Shared Albums) to Google Photos, and imports
+> Google albums into Apple Photos from a Takeout export or the Google Photos
+> Picker. Copying an album again adds only its new items. See the
+> [roadmap](#roadmap).
+
+## Using the app
+
+The window has two panes:
+
+- **Apple Photos** (left): your albums, grouped into albums (with their
+  folder path) and Shared Albums. Select one and choose *Copy to Google
+  Photos…*, or use the context menu.
+- **Google Takeout** (right): choose an extracted Takeout folder to list its
+  albums, years, Archive and Trash. An orange ⚠️ marks albums where photos
+  and metadata files couldn't all be matched (hover for counts). Select an
+  album and choose *Copy to Apple Photos…*.
+
+The toolbar connects or disconnects your Google account and opens *Pick
+from Google Photos…*. Album rows that were synced before show a badge:
+a green ✓ with the count when every item was copied, otherwise
+`copied/total` (hover for the destination album and last sync time). Each
+copy runs in a sheet with progress, a Stop button, and a list of failed
+items at the end; failed and not-yet-reached items are retried on the next
+run.
 
 ## Platform constraints
 
@@ -54,14 +74,14 @@ PhotoSyncCore/            Swift package, platform-independent, unit-tested
                           Photos Library and Picker API clients with retry/backoff
     Transfer/             Album uploader (export → upload → batchCreate),
                           Takeout and Picker importers, image metadata writer
-    Sync/                 SQLite sync history and per-direction coordinators
+    Sync/                 SQLite sync history, content hashing, per-direction coordinators
   Tests/PhotoSyncCoreTests/
 PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
   Apple/                  PhotoKit adapter, exporter, import destination, album pane
   Google/                 Google account model and toolbar control
   Takeout/                Takeout folder pane
   Transfer/               Transfer and import sheets and their models
-  Shared/                 Shared views
+  Shared/                 Shared views, sync badges, progress and sync-store helpers
 PhotoSync.xcodeproj       App project, depends on the local PhotoSyncCore package
 Config/                   Build settings, Info.plist keys, entitlements, OAuth secrets
 ```
@@ -74,18 +94,21 @@ stored in the login keychain. All scopes (including the Picker) are
 requested up front so later features don't need new consent. Sign-in fails
 if you untick the Photos permissions on the consent screen.
 
-A transfer creates a new album, then for each item exports the current
-version from PhotoKit (edited if edited; Live Photos as stills), uploads the
-bytes, and adds uploaded items with `mediaItems:batchCreate` in batches of
-50. Transient errors (429, 5xx, network) are retried with exponential
-backoff. A 401 triggers one token refresh. Failed items are listed at the
-end rather than aborting the transfer.
+The first transfer of an album creates a Google album; later ones add to
+it (see [Incremental sync](#incremental-sync)). For each new item the app
+exports the current version from PhotoKit (edited if edited; Live Photos as
+stills, iCloud-only originals are downloaded), uploads the bytes, and adds
+uploaded items with `mediaItems:batchCreate` in batches of 50. Transient
+errors (429, 5xx, network) are retried with exponential backoff, honoring
+`Retry-After`, and a 401 triggers one token refresh. Failed items are listed
+at the end rather than aborting the transfer. Uploads run one at a time.
 
 ### Takeout → Apple import
 
 Select a scanned Takeout album and choose *Copy to Apple Photos…*. The
-importer creates a new album with the same name, then adds each item with
-`PHAssetCreationRequest` in capture-date order. It restores:
+first import creates an Apple Photos album with the same name (you can
+rename it in the sheet); later imports add to it. Items are added with
+`PHAssetCreationRequest` in capture-date order. The importer restores:
 
 - **capture date** (`photoTakenTime`), **location** and **favorite** from the sidecar
 - **Live Photos** as photo + paired video. If Photos rejects the pair (the
@@ -116,10 +139,13 @@ them.
 ### Incremental sync
 
 Every transfer is recorded in `sync.sqlite` in the app's Application Support
-folder (inside the sandbox container): each source album is linked to the
-album it was copied into, and each item is recorded as soon as it reaches
-the destination. When you copy the same album again, the sheet shows how
-many items were copied before and:
+folder (inside the sandbox container,
+`~/Library/Containers/com.mortht.PhotoSync/Data/Library/Application Support/PhotoSync/`):
+each source album is linked to the album it was copied into, and each item
+is recorded as soon as it reaches the destination, so a stopped or crashed
+run resumes where it ended. The album rows show this history as badges.
+When you copy the same album again, the sheet shows how many items were
+copied before and:
 
 - adds only the new items to the **same** destination album
 - retries items that failed or weren't reached because the run was stopped
@@ -129,7 +155,9 @@ many items were copied before and:
   *Copy into a new album instead*
 
 Sync is one-way and additive: items you delete at the destination are not
-copied again, and deletions at the source are not mirrored.
+copied again, and deletions at the source are not mirrored. If the sheet
+can't check the history (for example while offline), it says so; items
+copied before are still skipped once the run can reach the earlier album.
 
 ### Takeout sidecar matching
 
@@ -171,9 +199,16 @@ xcodebuild -project PhotoSync.xcodeproj -scheme PhotoSync -configuration Debug -
 ```
 
 Or open `PhotoSync.xcodeproj` in Xcode and run the `PhotoSync` scheme.
-The project signs ad hoc ("Sign to Run Locally"). Set your own development
-team under *Signing & Capabilities* so macOS remembers the Photos permission
-between builds.
+The project signs ad hoc ("Sign to Run Locally"), so after a rebuild macOS
+may ask again for Photos access and whether Photo Sync may use its keychain
+item (choose *Always Allow*). Set your own development team under
+*Signing & Capabilities* to keep these permissions between builds.
+
+The core tests (`swift test`) cover the Takeout scanner and sidecar
+matching, OAuth (including a real loopback redirect), the Library and
+Picker clients, the uploader and importers, and the sync store. They use
+fake HTTP clients and a fake photo library, so they need no network,
+Google account or Photos access.
 
 The app is sandboxed with these entitlements: Photos library, read-only
 access to user-selected files (the Takeout folder), outgoing network
@@ -181,7 +216,8 @@ connections, and incoming connections for the OAuth loopback redirect.
 
 ## Google Cloud setup
 
-Needed for the Google features (roadmap step 4 onward):
+Needed for everything that talks to Google (all features except listing
+Apple albums and scanning Takeout):
 
 1. Create a project in the [Google Cloud console](https://console.cloud.google.com/).
 2. Enable the **Photos Library API** and the **Photos Picker API**.
@@ -204,6 +240,10 @@ after 7 days, so you'll need to reconnect about once a week.
 - [x] Takeout → Apple import
 - [x] Picker API import
 - [x] Incremental sync
+
+Possible next steps: upload several items in parallel, verify picking from
+shared albums in the Picker, and recreate Live Photos from Picker motion
+photos.
 
 ## License
 

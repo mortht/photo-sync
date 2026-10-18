@@ -11,6 +11,7 @@ final class AppleLibraryModel {
 
     @ObservationIgnored private var observer: LibraryChangeObserver?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
+    @ObservationIgnored private var changedSinceReload = false
 
     var hasAccess: Bool { authorization == .authorized }
     var regularAlbums: [AppleAlbum] { albums.filter { $0.kind == .regular } }
@@ -44,13 +45,18 @@ final class AppleLibraryModel {
         self.observer = observer
     }
 
-    /// Coalesces bursts of change notifications into one reload.
+    /// Reloads at most once every few seconds. An import adds assets one by
+    /// one, and each change would otherwise refetch every album.
     private func scheduleReload() {
-        reloadTask?.cancel()
+        changedSinceReload = true
+        guard reloadTask == nil else { return }
         reloadTask = Task {
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled else { return }
+            try? await Task.sleep(for: .seconds(3))
+            changedSinceReload = false
             await reload()
+            reloadTask = nil
+            // Changes that arrived during the reload.
+            if changedSinceReload { scheduleReload() }
         }
     }
 }
