@@ -1,0 +1,7 @@
+// Shared build settings for the PhotoSync app target.
+// Google OAuth credentials live in the git-ignored Secrets.xcconfig;
+// copy Secrets.example.xcconfig to create it.
+GOOGLE_OAUTH_CLIENT_ID =
+GOOGLE_OAUTH_CLIENT_SECRET =
+
+#include? "Secrets.xcconfig"

@@ -13,7 +13,10 @@
 /* Begin PBXFileReference section */
 		5F0000000000000000000003 /* PhotoSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PhotoSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F0000000000000000000010 /* PhotoSyncCore */ = {isa = PBXFileReference; lastKnownFileType = wrapper; path = PhotoSyncCore; sourceTree = "<group>"; };
-		5F0000000000000000000011 /* Config */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Config; sourceTree = "<group>"; };
+		5F0000000000000000000016 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		5F0000000000000000000017 /* Secrets.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.example.xcconfig; sourceTree = "<group>"; };
+		5F0000000000000000000018 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		5F0000000000000000000019 /* PhotoSync.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PhotoSync.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -44,6 +47,17 @@
 				5F0000000000000000000011 /* Config */,
 				5F0000000000000000000007 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		5F0000000000000000000011 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				5F0000000000000000000016 /* Base.xcconfig */,
+				5F0000000000000000000017 /* Secrets.example.xcconfig */,
+				5F0000000000000000000018 /* Info.plist */,
+				5F0000000000000000000019 /* PhotoSync.entitlements */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		5F0000000000000000000007 /* Products */ = {
@@ -185,6 +199,7 @@
 		};
 		5F0000000000000000000014 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5F0000000000000000000016 /* Base.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/PhotoSync.entitlements;
 				CODE_SIGN_IDENTITY = "-";
@@ -194,6 +209,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Photo Sync";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -212,6 +228,7 @@
 		};
 		5F0000000000000000000015 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5F0000000000000000000016 /* Base.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Config/PhotoSync.entitlements;
 				CODE_SIGN_IDENTITY = "-";
@@ -221,6 +238,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Photo Sync";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
