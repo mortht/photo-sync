@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AppleAlbumsPane: View {
     let model: AppleLibraryModel
+    let syncStatus: SyncStatusModel
     /// Whether a Google account is connected.
     let canTransfer: Bool
     let onTransfer: (AppleAlbum) -> Void
@@ -100,7 +101,9 @@ struct AppleAlbumsPane: View {
             title: album.title,
             subtitle: album.folderPath.isEmpty ? nil : album.folderPath.joined(separator: " › "),
             photoCount: album.photoCount,
-            videoCount: album.videoCount
+            videoCount: album.videoCount,
+            sync: syncStatus.badge(.appleToGoogle, sourceAlbumID: album.id,
+                                   totalItems: album.photoCount + album.videoCount)
         ) {
             AssetThumbnail(assetID: album.keyAssetID, fallbackSymbol: album.kind == .shared
                 ? "person.2.crop.square.stack" : "rectangle.stack")

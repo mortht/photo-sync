@@ -88,6 +88,21 @@ struct FakeSource: TransferSource {
         #expect(try FileManager.default.contentsOfDirectory(atPath: temp.path).isEmpty)
     }
 
+    @Test func progressAdvancesPerItemBeforeTheBatchIsAdded() async throws {
+        let http = Self.fakeGoogle()
+        let client = GooglePhotosLibraryClient(httpClient: http, retryPolicy: .init(sleep: { _ in })) { _ in "t" }
+        let updates = Locked<[TransferProgress]>([])
+        _ = try await GoogleAlbumUploader(client: client, temporaryDirectory: temp)
+            .transfer(Self.items(3), toNewAlbumTitled: "Trip", from: FakeSource()) { p in
+                updates.withValue { $0.append(p) }
+            }
+        // Before the single batchCreate, the bar already moves item by item.
+        let beforeAdding = updates.current.filter { $0.added == 0 }.map(\.fractionCompleted)
+        #expect(beforeAdding.contains { $0 > 0.3 && $0 < 0.4 })
+        #expect(beforeAdding.contains { $0 > 0.6 && $0 < 0.7 })
+        #expect(updates.current.last?.fractionCompleted == 1)
+    }
+
     @Test func failedBatchMarksAllItsItemsFailed() async throws {
         let http = MockHTTPClient { recorded in
             switch recorded.path {

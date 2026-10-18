@@ -37,6 +37,9 @@ public protocol TransferSource: Sendable {
 
 public struct TransferProgress: Sendable, Equatable {
     public var total: Int
+    /// Items handled so far (uploaded, failed or skipped). Drives the progress
+    /// bar, because uploads are only added to the album in batches.
+    public var processed = 0
     /// Items whose bytes were uploaded.
     public var uploaded = 0
     /// Items added to the album.
@@ -50,8 +53,9 @@ public struct TransferProgress: Sendable, Equatable {
         self.total = total
     }
 
+    /// Final tally of items that reached an outcome.
     public var completed: Int { added + failed + skipped }
-    public var fractionCompleted: Double { total == 0 ? 1 : Double(completed) / Double(total) }
+    public var fractionCompleted: Double { total == 0 ? 1 : min(Double(processed) / Double(total), 1) }
 }
 
 public struct TransferFailure: Sendable, Hashable, Identifiable {
@@ -154,6 +158,8 @@ public struct GoogleAlbumUploader: Sendable {
             }
             if let ledger, try await ledger.contains(itemID: item.id) {
                 state.skipped += 1
+                state.processed += 1
+                progress(state)
                 continue
             }
             state.currentFileName = item.fileName
@@ -173,6 +179,8 @@ public struct GoogleAlbumUploader: Sendable {
             } catch {
                 fail(item, error)
             }
+            state.processed += 1
+            progress(state)
 
             if pending.count >= batchSize { try await flush() }
         }

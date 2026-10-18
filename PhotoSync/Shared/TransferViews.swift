@@ -9,7 +9,7 @@ struct TransferProgressSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ProgressView(value: progress.fractionCompleted) {
-                Text("\(progress.completed) of \(progress.total) items")
+                Text("\(progress.processed) of \(progress.total) items")
             } currentValueLabel: {
                 Text(progress.currentFileName ?? " ")
                     .lineLimit(1)

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TakeoutPane: View {
     @Bindable var model: TakeoutModel
+    let syncStatus: SyncStatusModel
     /// Whether Photos access was granted.
     let canImport: Bool
     let onImport: (TakeoutAlbum) -> Void
@@ -94,7 +95,9 @@ struct TakeoutPane: View {
                         subtitle: album.folderURLs.count > 1 ? "\(album.folderURLs.count) archive parts" : nil,
                         photoCount: album.photoCount,
                         videoCount: album.videoCount,
-                        warning: Self.warning(for: album)
+                        warning: Self.warning(for: album),
+                        sync: syncStatus.badge(.takeoutToApple, sourceAlbumID: album.id,
+                                               totalItems: album.assets.count)
                     ) {
                         SymbolArtwork(systemName: Self.symbol(for: album.kind))
                     }

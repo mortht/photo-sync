@@ -44,6 +44,20 @@ import Testing
         #expect(try await store.syncedItemIDs(pairID: first.id).isEmpty)
     }
 
+    @Test func summariesCountSyncedItemsPerPair() async throws {
+        let store = try SyncStore(url: nil)
+        let a = try await store.linkPair(direction: .appleToGoogle, sourceAlbumID: "A", sourceAlbumTitle: "A",
+                                         destinationAlbumID: "G", destinationAlbumTitle: "A")
+        _ = try await store.linkPair(direction: .takeoutToApple, sourceAlbumID: "T", sourceAlbumTitle: "T",
+                                     destinationAlbumID: "P", destinationAlbumTitle: "T")
+        for id in ["1", "2"] {
+            try await store.recordItem(pairID: a.id, sourceItemID: id, contentHash: nil, destinationIDs: ["m\(id)"])
+        }
+        let summaries = try await store.summaries()
+        #expect(summaries.first { $0.pair.sourceAlbumID == "A" }?.syncedItemCount == 2)
+        #expect(summaries.first { $0.pair.sourceAlbumID == "T" }?.syncedItemCount == 0)
+    }
+
     @Test func recordingTwiceUpdates() async throws {
         let store = try SyncStore(url: nil)
         let pair = try await store.linkPair(direction: .appleToGoogle, sourceAlbumID: "A", sourceAlbumTitle: "A",

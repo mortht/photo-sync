@@ -18,6 +18,12 @@ public struct SyncPair: Sendable, Equatable, Identifiable {
     public var lastSyncedAt: Date?
 }
 
+/// A pair and how many of its items are synced, for album lists.
+public struct SyncSummary: Sendable, Equatable {
+    public var pair: SyncPair
+    public var syncedItemCount: Int
+}
+
 public struct SyncStoreError: Error, LocalizedError, Equatable {
     public var message: String
     public var errorDescription: String? { "Sync history error: \(message)" }
@@ -86,6 +92,25 @@ public actor SyncStore {
                 sourceAlbumID: row.text(2), sourceAlbumTitle: row.text(3),
                 destinationAlbumID: row.text(4), destinationAlbumTitle: row.text(5),
                 lastSyncedAt: row.optionalDouble(6).map(Date.init(timeIntervalSince1970:))
+            )
+        }
+    }
+
+    public func summaries() throws -> [SyncSummary] {
+        try query("""
+            SELECT p.id, p.direction, p.source_album_id, p.source_title, p.destination_album_id,
+                   p.destination_title, p.last_synced_at, COUNT(i.source_item_id)
+            FROM album_pairs p LEFT JOIN synced_items i ON i.pair_id = p.id
+            GROUP BY p.id
+            """) { row in
+            SyncSummary(
+                pair: SyncPair(
+                    id: row.int(0), direction: SyncDirection(rawValue: row.text(1)) ?? .appleToGoogle,
+                    sourceAlbumID: row.text(2), sourceAlbumTitle: row.text(3),
+                    destinationAlbumID: row.text(4), destinationAlbumTitle: row.text(5),
+                    lastSyncedAt: row.optionalDouble(6).map(Date.init(timeIntervalSince1970:))
+                ),
+                syncedItemCount: Int(row.int(7))
             )
         }
     }

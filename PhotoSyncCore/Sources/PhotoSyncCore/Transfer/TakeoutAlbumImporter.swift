@@ -123,6 +123,7 @@ public struct TakeoutAlbumImporter: Sendable {
                 }
                 if known {
                     state.skipped += plannedFiles.count
+                    state.processed += plannedFiles.count
                     report.skippedCount += plannedFiles.count
                     progress(state)
                     continue
@@ -155,6 +156,7 @@ public struct TakeoutAlbumImporter: Sendable {
                                                            message: Self.message(for: error)))
                     state.failed += 1
                 }
+                state.processed += 1
                 progress(state)
             }
 

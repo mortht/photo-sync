@@ -7,14 +7,15 @@ struct ContentView: View {
     @State private var google = GoogleAccountModel()
     @State private var transfer: TransferModel?
     @State private var takeoutImport: ImportModel?
+    @State private var syncStatus = SyncStatusModel()
 
     var body: some View {
         HSplitView {
-            AppleAlbumsPane(model: apple, canTransfer: google.isSignedIn) { album in
+            AppleAlbumsPane(model: apple, syncStatus: syncStatus, canTransfer: google.isSignedIn) { album in
                 transfer = TransferModel(album: album)
             }
             .frame(minWidth: 340, maxWidth: .infinity)
-            TakeoutPane(model: takeout, canImport: apple.hasAccess) { album in
+            TakeoutPane(model: takeout, syncStatus: syncStatus, canImport: apple.hasAccess) { album in
                 takeoutImport = ImportModel(album: album)
             }
             .frame(minWidth: 340, maxWidth: .infinity)
@@ -25,12 +26,19 @@ struct ContentView: View {
                 GoogleAccountButton(model: google)
             }
         }
-        .task { await google.start() }
-        .sheet(item: $transfer) { transfer in
+        .task {
+            await google.start()
+            await syncStatus.refresh()
+        }
+        .sheet(item: $transfer, onDismiss: refreshSyncStatus) { transfer in
             TransferSheet(model: transfer, google: google)
         }
-        .sheet(item: $takeoutImport) { takeoutImport in
+        .sheet(item: $takeoutImport, onDismiss: refreshSyncStatus) { takeoutImport in
             ImportSheet(model: takeoutImport)
         }
+    }
+
+    private func refreshSyncStatus() {
+        Task { await syncStatus.refresh() }
     }
 }
