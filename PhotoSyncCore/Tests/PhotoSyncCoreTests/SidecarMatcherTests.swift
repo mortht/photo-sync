@@ -82,6 +82,21 @@ import Testing
         #expect(result.sidecarByMedia["IMG_0001.jpg"] == "IMG_0001.json")
     }
 
+    @Test func uploadedWithoutExtension() {
+        let result = match(
+            ["3806.jpg", "3807.jpg", "3808(1).jpg"],
+            ["3806.supplemental-metadata.json", "3807.supp.json", "3808.supplemental-metadata(1).json"],
+            titles: ["3806.supplemental-metadata.json": "3806", "3807.supp.json": "3807",
+                     "3808.supplemental-metadata(1).json": "3808"]
+        )
+        #expect(result.sidecarByMedia == [
+            "3806.jpg": "3806.supplemental-metadata.json",
+            "3807.jpg": "3807.supp.json",
+            "3808(1).jpg": "3808.supplemental-metadata(1).json",
+        ])
+        #expect(result.unmatchedSidecars.isEmpty)
+    }
+
     @Test func titleFallback() {
         let result = match(["holiday photo.jpg"], ["weird name.json"], titles: ["weird name.json": "Holiday Photo.jpg"])
         #expect(result.sidecarByMedia["holiday photo.jpg"] == "weird name.json")

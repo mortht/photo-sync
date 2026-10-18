@@ -10,7 +10,8 @@ import Foundation
 /// - long names truncated as a whole (`a_very_long_file_na.json`)
 /// - duplicates: `IMG(1).jpg` → `IMG.jpg(1).json` / `IMG.jpg.supplemental-metadata(1).json`
 /// - edited copies without their own sidecar: `IMG-edited.jpg` (localized) uses `IMG.jpg`'s
-/// - sidecars without the media extension: `IMG.json`
+/// - sidecars without the media extension: `IMG.json`, `IMG.supplemental-metadata.json`
+///   (items uploaded without an extension, which Takeout adds to the media file only)
 struct SidecarMatcher {
     struct Sidecar: Sendable, Hashable {
         var name: String
@@ -192,6 +193,8 @@ struct SidecarMatcher {
                     guard suffix.hasPrefix(tail) else { continue }
                     let key = Key(name: String(name.dropLast(length)), duplicate: candidate.duplicate)
                     if acceptable.contains(key) { return key }
+                    // Uploaded without an extension: `3806.supplemental-metadata.json` for `3806.jpg`.
+                    if let keys = byStem[key], keys.count == 1 { return keys.first }
                 }
             }
 
