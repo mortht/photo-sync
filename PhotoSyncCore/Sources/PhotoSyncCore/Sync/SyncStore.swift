@@ -5,6 +5,8 @@ import SQLite3
 public enum SyncDirection: String, Sendable, Codable {
     case appleToGoogle
     case takeoutToApple
+    /// Items picked in the Google Photos Picker, keyed by the target album name.
+    case pickerToApple
 }
 
 /// A source album linked to the destination album it was copied into.

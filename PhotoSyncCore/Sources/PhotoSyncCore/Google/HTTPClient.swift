@@ -5,6 +5,18 @@ public protocol HTTPClient: Sendable {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse)
     /// Uploads the body from a file, which avoids loading large videos into memory.
     func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, HTTPURLResponse)
+    /// Streams the response body to a temporary file the caller owns.
+    func download(for request: URLRequest) async throws -> (URL, HTTPURLResponse)
+}
+
+extension HTTPClient {
+    /// Buffers the body in memory; fine for test doubles.
+    public func download(for request: URLRequest) async throws -> (URL, HTTPURLResponse) {
+        let (data, response) = try await data(for: request)
+        let file = FileManager.default.temporaryDirectory.appending(path: "PhotoSync-download-\(UUID().uuidString)")
+        try data.write(to: file)
+        return (file, response)
+    }
 }
 
 public struct URLSessionHTTPClient: HTTPClient {
@@ -22,6 +34,14 @@ public struct URLSessionHTTPClient: HTTPClient {
     public func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.upload(for: request, fromFile: fileURL)
         return (data, try Self.http(response))
+    }
+
+    public func download(for request: URLRequest) async throws -> (URL, HTTPURLResponse) {
+        let (location, response) = try await session.download(for: request)
+        // Move out of URLSession's temporary location before it can be cleaned up.
+        let file = FileManager.default.temporaryDirectory.appending(path: "PhotoSync-download-\(UUID().uuidString)")
+        try FileManager.default.moveItem(at: location, to: file)
+        return (file, try Self.http(response))
     }
 
     private static func http(_ response: URLResponse) throws -> HTTPURLResponse {

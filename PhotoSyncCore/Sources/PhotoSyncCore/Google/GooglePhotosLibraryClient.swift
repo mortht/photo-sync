@@ -43,15 +43,15 @@ public struct GooglePhotosLibraryClient: Sendable {
     /// Upper limit of a media item description.
     public static let maxDescriptionLength = 1000
 
-    private let httpClient: any HTTPClient
-    private let accessToken: AccessTokenProvider
-    private let retryPolicy: RetryPolicy
+    private let transport: GoogleAPITransport
 
     public init(httpClient: any HTTPClient = URLSessionHTTPClient(), retryPolicy: RetryPolicy = .default,
                 accessToken: @escaping AccessTokenProvider) {
-        self.httpClient = httpClient
-        self.accessToken = accessToken
-        self.retryPolicy = retryPolicy
+        transport = GoogleAPITransport(httpClient: httpClient, accessToken: accessToken, retryPolicy: retryPolicy)
+    }
+
+    private func send(_ request: URLRequest, uploadingFile fileURL: URL? = nil) async throws -> Data {
+        try await transport.send(request, uploadingFile: fileURL)
     }
 
     public func createAlbum(title: String) async throws -> GoogleAlbum {
@@ -132,46 +132,6 @@ public struct GooglePhotosLibraryClient: Sendable {
                 status = .failed(message: result?.status?.message ?? "No result returned")
             }
             return NewMediaItemResult(uploadToken: item.uploadToken, status: status)
-        }
-    }
-
-    // MARK: - Sending
-
-    private func send(_ request: URLRequest, uploadingFile fileURL: URL? = nil) async throws -> Data {
-        var forceRefresh = false
-        var attempt = 1
-        while true {
-            try Task.checkCancellation()
-            var authorized = request
-            authorized.setValue("Bearer \(try await accessToken(forceRefresh))", forHTTPHeaderField: "Authorization")
-
-            let data: Data
-            let response: HTTPURLResponse
-            do {
-                (data, response) = if let fileURL {
-                    try await httpClient.upload(for: authorized, fromFile: fileURL)
-                } else {
-                    try await httpClient.data(for: authorized)
-                }
-            } catch where RetryPolicy.isRetryable(error) && attempt < retryPolicy.maxAttempts {
-                try await retryPolicy.sleep(retryPolicy.delay(forAttempt: attempt, retryAfter: nil))
-                attempt += 1
-                continue
-            }
-
-            switch response.statusCode {
-            case 200..<300:
-                return data
-            case 401 where !forceRefresh:
-                // Token revoked or expired early: refresh once and retry.
-                forceRefresh = true
-            case let status where RetryPolicy.isRetryable(status: status) && attempt < retryPolicy.maxAttempts:
-                let retryAfter = (response.value(forHTTPHeaderField: "Retry-After")).flatMap(Double.init)
-                try await retryPolicy.sleep(retryPolicy.delay(forAttempt: attempt, retryAfter: retryAfter.map { .seconds($0) }))
-                attempt += 1
-            default:
-                throw GoogleAPIError(statusCode: response.statusCode, body: data)
-            }
         }
     }
 
