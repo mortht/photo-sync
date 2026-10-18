@@ -5,8 +5,9 @@ albums between **iCloud Photos** and **Google Photos**: connect both
 accounts, browse albums on each side, and copy an album across.
 
 > Status: early development. The album browser lists Apple Photos albums
-> (including Shared Albums) and scanned Google Takeout exports. Transfers are
-> not implemented yet. See the [roadmap](#roadmap).
+> (including Shared Albums) and scanned Google Takeout exports, and copies
+> Apple albums to new Google Photos albums. Google → Apple import is not
+> implemented yet. See the [roadmap](#roadmap).
 
 ## Platform constraints
 
@@ -47,19 +48,38 @@ The design follows from what the two platforms actually allow:
 PhotoSyncCore/            Swift package, platform-independent, unit-tested
   Sources/PhotoSyncCore/
     Takeout/              Takeout scanner, sidecar matcher, metadata parsing
+    Google/               OAuth (PKCE + loopback redirect), Keychain token store,
+                          Photos Library API client with retry/backoff
+    Transfer/             Album uploader (export → upload → batchCreate)
   Tests/PhotoSyncCoreTests/
 PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
-  Apple/                  PhotoKit adapter and Apple album pane
+  Apple/                  PhotoKit adapter, exporter and Apple album pane
+  Google/                 Google account model and toolbar control
   Takeout/                Takeout folder pane
+  Transfer/               Transfer sheet and its model
   Shared/                 Shared views
 PhotoSync.xcodeproj       App project, depends on the local PhotoSyncCore package
-Config/                   Entitlements (and later the local OAuth client config)
+Config/                   Build settings, Info.plist keys, entitlements, OAuth secrets
 ```
 
-To come in `PhotoSyncCore`: Google OAuth (PKCE with a loopback redirect,
-tokens in the Keychain behind a protocol), Google Library and Picker REST
-clients, the sync state store, and a transfer engine with retry/backoff and
-progress reporting.
+To come in `PhotoSyncCore`: the Picker REST client, the Takeout importer
+and the sync state store.
+
+### Apple → Google transfer
+
+Sign-in uses the authorization-code flow with PKCE. A listener on
+`127.0.0.1` with a random port receives the redirect, and the tokens are
+stored in the login keychain. All scopes (including the Picker) are
+requested up front so later features don't need new consent. Sign-in fails
+if you untick the Photos permissions on the consent screen.
+
+A transfer creates a new album, then for each item exports the current
+version from PhotoKit (edited if edited; Live Photos as stills), uploads the
+bytes, and adds uploaded items with `mediaItems:batchCreate` in batches of
+50. Transient errors (429, 5xx, network) are retried with exponential
+backoff. A 401 triggers one token refresh. Failed items are listed at the
+end rather than aborting the transfer. Running a transfer again currently
+creates a second album; incremental sync comes with the sync store.
 
 ### Takeout sidecar matching
 
@@ -105,8 +125,8 @@ team under *Signing & Capabilities* so macOS remembers the Photos permission
 between builds.
 
 The app is sandboxed with these entitlements: Photos library, read-only
-access to user-selected files (the Takeout folder), and outgoing network
-connections.
+access to user-selected files (the Takeout folder), outgoing network
+connections, and incoming connections for the OAuth loopback redirect.
 
 ## Google Cloud setup
 
@@ -117,15 +137,19 @@ Needed for the Google features (roadmap step 4 onward):
 3. Configure the **OAuth consent screen** (External, testing mode) and add
    your Google account as a test user.
 4. Create an **OAuth client ID** of type **Desktop app**.
-5. Put the client ID in a local, git-ignored config file (details follow with
-   the OAuth implementation).
+5. Copy `Config/Secrets.example.xcconfig` to `Config/Secrets.xcconfig`
+   (git-ignored), fill in the client ID and client secret, and rebuild.
+   Without it, the toolbar shows "Google Not Configured".
+
+While the consent screen is in testing mode, Google expires refresh tokens
+after 7 days, so you'll need to reconnect about once a week.
 
 ## Roadmap
 
 - [x] Scaffold the package, app and README
 - [x] Takeout scanner and sidecar matcher, with unit tests
 - [x] PhotoKit album listing in the UI (albums, folders, Shared Albums)
-- [ ] Google OAuth and Apple → Google album transfer
+- [x] Google OAuth and Apple → Google album transfer
 - [ ] Takeout → Apple import
 - [ ] Picker API import
 - [ ] Incremental sync and polish

@@ -3,6 +3,14 @@ import SwiftUI
 
 struct AppleAlbumsPane: View {
     let model: AppleLibraryModel
+    /// Whether a Google account is connected.
+    let canTransfer: Bool
+    let onTransfer: (AppleAlbum) -> Void
+    @State private var selection: AppleAlbum.ID?
+
+    private var selectedAlbum: AppleAlbum? {
+        model.albums.first { $0.id == selection }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +30,19 @@ struct AppleAlbumsPane: View {
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.hasAccess {
+                Divider()
+                HStack {
+                    Spacer()
+                    Button("Copy to Google Photos…") {
+                        if let selectedAlbum { onTransfer(selectedAlbum) }
+                    }
+                    .disabled(selectedAlbum == nil || !canTransfer)
+                    .help(canTransfer ? "Copy the selected album to a new Google Photos album"
+                                      : "Connect your Google account first")
+                }
+                .padding(8)
+            }
         }
         .task { await model.start() }
     }
@@ -60,7 +81,7 @@ struct AppleAlbumsPane: View {
     }
 
     private var albumList: some View {
-        List {
+        List(selection: $selection) {
             if !model.regularAlbums.isEmpty {
                 Section("Albums") {
                     ForEach(model.regularAlbums) { row(for: $0) }
@@ -83,6 +104,10 @@ struct AppleAlbumsPane: View {
         ) {
             AssetThumbnail(assetID: album.keyAssetID, fallbackSymbol: album.kind == .shared
                 ? "person.2.crop.square.stack" : "rectangle.stack")
+        }
+        .contextMenu {
+            Button("Copy to Google Photos…") { onTransfer(album) }
+                .disabled(!canTransfer)
         }
     }
 }

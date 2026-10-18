@@ -44,6 +44,10 @@ public struct TransferProgress: Sendable, Equatable {
     public var failed = 0
     public var currentFileName: String?
 
+    public init(total: Int) {
+        self.total = total
+    }
+
     public var completed: Int { added + failed }
     public var fractionCompleted: Double { total == 0 ? 1 : Double(completed) / Double(total) }
 }
