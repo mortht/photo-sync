@@ -103,6 +103,29 @@ struct FakeSource: TransferSource {
         #expect(updates.current.last?.fractionCompleted == 1)
     }
 
+    /// Behaves like URLSession when the user stops: the task is cancelled and
+    /// the in-flight request throws URLError(.cancelled).
+    struct StoppingSource: TransferSource {
+        var stopAt: String
+        func export(_ item: TransferItem, into directory: URL) async throws -> ExportedFile {
+            if item.id == stopAt {
+                withUnsafeCurrentTask { $0?.cancel() }
+                throw URLError(.cancelled)
+            }
+            return try await FakeSource().export(item, into: directory)
+        }
+    }
+
+    @Test func stoppingIsNotReportedAsAFailure() async throws {
+        let http = Self.fakeGoogle()
+        let client = GooglePhotosLibraryClient(httpClient: http, retryPolicy: .init(sleep: { _ in })) { _ in "t" }
+        let uploader = GoogleAlbumUploader(client: client, temporaryDirectory: temp)
+        let report = try await uploader.transfer(Self.items(3), toNewAlbumTitled: "Trip",
+                                                 from: StoppingSource(stopAt: "id-2"))
+        #expect(report.wasCancelled)
+        #expect(report.failures.isEmpty)
+    }
+
     @Test func failedBatchMarksAllItsItemsFailed() async throws {
         let http = MockHTTPClient { recorded in
             switch recorded.path {

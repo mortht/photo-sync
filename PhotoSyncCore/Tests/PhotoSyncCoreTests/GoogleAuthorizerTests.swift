@@ -164,6 +164,53 @@ import Testing
         #expect(await authorizer.account == nil)
     }
 
+    @Test func concurrentCallersAllSeeSignInRequiredOnRevokedToken() async throws {
+        let store = InMemoryTokenStore(OAuthTokens(accessToken: "old", refreshToken: "r", expiresAt: .distantPast,
+                                                   scopes: [], email: nil))
+        let http = MockHTTPClient { _ in
+            Thread.sleep(forTimeInterval: 0.05)
+            return .json(#"{"error":"invalid_grant"}"#, status: 400)
+        }
+        let authorizer = GoogleAuthorizer(configuration: Self.configuration, tokenStore: store, httpClient: http)
+        async let first: Error? = { do { _ = try await authorizer.accessToken(); return nil } catch { return error } }()
+        async let second: Error? = { do { _ = try await authorizer.accessToken(); return nil } catch { return error } }()
+        let errors = await [first, second]
+        #expect(errors.allSatisfy { ($0 as? GoogleAuthError) == .signInRequired })
+        #expect(http.requests.count == 1)
+    }
+
+    @Test func signOutDuringRefreshIsNotUndone() async throws {
+        let store = InMemoryTokenStore(OAuthTokens(accessToken: "old", refreshToken: "r", expiresAt: .distantPast,
+                                                   scopes: [], email: nil))
+        let http = MockHTTPClient { recorded in
+            if recorded.request.url == GoogleOAuthConfiguration.tokenEndpoint { Thread.sleep(forTimeInterval: 0.1) }
+            return Self.tokenReply(access: "new")
+        }
+        let authorizer = GoogleAuthorizer(configuration: Self.configuration, tokenStore: store, httpClient: http)
+        async let refresh = try? authorizer.accessToken()
+        try await Task.sleep(for: .milliseconds(30))
+        await authorizer.signOut()
+        _ = await refresh
+        #expect(try store.load() == nil)
+        #expect(await authorizer.account == nil)
+    }
+
+    @Test func tokensAreLoadedLazily() async throws {
+        final class CountingStore: TokenStore, @unchecked Sendable {
+            let loads = Locked(0)
+            func load() throws -> OAuthTokens? { loads.withValue { $0 += 1 }; return nil }
+            func save(_ tokens: OAuthTokens) throws {}
+            func delete() throws {}
+        }
+        let store = CountingStore()
+        let authorizer = GoogleAuthorizer(configuration: Self.configuration, tokenStore: store,
+                                          httpClient: MockHTTPClient { _ in .init() })
+        #expect(store.loads.current == 0)
+        _ = await authorizer.account
+        _ = await authorizer.account
+        #expect(store.loads.current == 1)
+    }
+
     @Test func signOutDeletesAndRevokes() async throws {
         let store = InMemoryTokenStore(OAuthTokens(accessToken: "a", refreshToken: "r", expiresAt: .distantFuture,
                                                    scopes: [], email: nil))

@@ -23,6 +23,8 @@ final class TransferModel: Identifiable {
     private(set) var progress = TransferProgress(total: 0)
     private(set) var items: [TransferItem] = []
     private(set) var preview = SyncPreview.newAlbum
+    /// Why the sync history couldn't be checked, if it couldn't.
+    private(set) var previewError: String?
 
     @ObservationIgnored private var task: Task<Void, Never>?
 
@@ -50,9 +52,12 @@ final class TransferModel: Identifiable {
             PhotoKitAlbums.transferItems(inAlbum: albumID)
         }.value
         if let client {
-            // Without history (or offline) this simply offers a new album.
-            preview = (try? await AppleToGoogleSync(store: AppSync.store, client: client)
-                .preview(sourceAlbumID: albumID, itemIDs: items.map(\.id))) ?? .newAlbum
+            do {
+                preview = try await AppleToGoogleSync(store: AppSync.store, client: client)
+                    .preview(sourceAlbumID: albumID, itemIDs: items.map(\.id))
+            } catch {
+                previewError = error.localizedDescription
+            }
         }
         phase = .ready
     }
@@ -65,23 +70,16 @@ final class TransferModel: Identifiable {
         phase = .running
 
         task = Task {
-            // An ordered stream keeps progress updates from arriving out of order.
-            let (updates, continuation) = AsyncStream.makeStream(of: TransferProgress.self,
-                                                                 bufferingPolicy: .bufferingNewest(1))
-            let consumer = Task { for await update in updates { progress = update } }
-            defer { consumer.cancel() }
-
             do {
-                let report = try await AppleToGoogleSync(store: AppSync.store, client: client).run(
-                    sourceAlbumID: album.id, sourceAlbumTitle: album.title, items: items,
-                    newAlbumTitle: title, forceNewAlbum: forceNewAlbum, from: PhotoKitTransferSource()
-                ) { continuation.yield($0) }
-                continuation.finish()
-                await consumer.value
+                let report = try await withProgressUpdates({ self.progress = $0 }) { report in
+                    try await AppleToGoogleSync(store: AppSync.store, client: client).run(
+                        sourceAlbumID: album.id, sourceAlbumTitle: album.title, items: items,
+                        newAlbumTitle: title, forceNewAlbum: forceNewAlbum, from: PhotoKitTransferSource(),
+                        progress: report)
+                }
                 phase = .finished(report)
             } catch {
-                continuation.finish()
-                phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                phase = .failed(error.localizedDescription)
                 onError(error)
             }
         }

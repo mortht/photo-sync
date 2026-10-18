@@ -148,12 +148,13 @@ public struct TakeoutAlbumImporter: Sendable {
                                                         workDirectory: workDirectory, into: destination,
                                                         albumID: albumID, report: &report)
                     state.added += 1
-                } catch is CancellationError {
-                    report.wasCancelled = true
-                    break
                 } catch {
+                    if Task.isCancelled || error is CancellationError {
+                        report.wasCancelled = true
+                        break
+                    }
                     report.failures.append(TransferFailure(itemID: asset.id, fileName: fileName,
-                                                           message: Self.message(for: error)))
+                                                           message: error.localizedDescription))
                     state.failed += 1
                 }
                 state.processed += 1
@@ -246,9 +247,5 @@ public struct TakeoutAlbumImporter: Sendable {
             ))
             return [stillID, videoID]
         }
-    }
-
-    private static func message(for error: any Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 }

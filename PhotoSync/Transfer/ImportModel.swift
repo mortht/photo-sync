@@ -21,6 +21,7 @@ final class ImportModel: Identifiable {
     private(set) var phase: Phase = .loading
     private(set) var progress = TransferProgress(total: 0)
     private(set) var preview = SyncPreview.newAlbum
+    private(set) var previewError: String?
 
     @ObservationIgnored private var task: Task<Void, Never>?
 
@@ -47,7 +48,11 @@ final class ImportModel: Identifiable {
     }
 
     func load() async {
-        preview = (try? await sync.preview(album: album)) ?? .newAlbum
+        do {
+            preview = try await sync.preview(album: album)
+        } catch {
+            previewError = error.localizedDescription
+        }
         phase = .ready
     }
 
@@ -59,19 +64,14 @@ final class ImportModel: Identifiable {
         phase = .running
 
         task = Task {
-            let (updates, continuation) = AsyncStream.makeStream(of: TransferProgress.self,
-                                                                 bufferingPolicy: .bufferingNewest(1))
-            let consumer = Task { for await update in updates { progress = update } }
-            defer { consumer.cancel() }
             do {
-                let report = try await sync.run(album: album, newAlbumTitle: title, forceNewAlbum: forceNewAlbum,
-                                                options: options) { continuation.yield($0) }
-                continuation.finish()
-                await consumer.value
+                let report = try await withProgressUpdates({ self.progress = $0 }) { report in
+                    try await sync.run(album: album, newAlbumTitle: title, forceNewAlbum: forceNewAlbum,
+                                       options: options, progress: report)
+                }
                 phase = .finished(report)
             } catch {
-                continuation.finish()
-                phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+                phase = .failed(error.localizedDescription)
             }
         }
     }

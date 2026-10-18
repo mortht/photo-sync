@@ -70,8 +70,12 @@ public actor GoogleAuthorizer {
     private let tokenStore: any TokenStore
     private let httpClient: any HTTPClient
     private let now: @Sendable () -> Date
-    private var tokens: OAuthTokens?
+    /// Loaded from the token store on first use, so creating the authorizer
+    /// (e.g. at app launch on the main actor) never waits on the keychain.
+    private var cachedTokens: OAuthTokens??
     private var refreshTask: Task<OAuthTokens, any Error>?
+    /// Bumped on sign-in and sign-out so an in-flight refresh can't overwrite them.
+    private var generation = 0
 
     public init(
         configuration: GoogleOAuthConfiguration,
@@ -83,7 +87,16 @@ public actor GoogleAuthorizer {
         self.tokenStore = tokenStore
         self.httpClient = httpClient
         self.now = now
-        tokens = try? tokenStore.load()
+    }
+
+    private var tokens: OAuthTokens? {
+        get {
+            if let cachedTokens { return cachedTokens }
+            let loaded = try? tokenStore.load()
+            cachedTokens = .some(loaded)
+            return loaded
+        }
+        set { cachedTokens = .some(newValue) }
     }
 
     /// The signed-in account, if tokens are stored.
@@ -115,6 +128,7 @@ public actor GoogleAuthorizer {
 
         try tokenStore.save(newTokens)
         tokens = newTokens
+        generation += 1
         return GoogleAccount(email: newTokens.email)
     }
 
@@ -122,6 +136,7 @@ public actor GoogleAuthorizer {
     public func signOut() async {
         let token = tokens?.refreshToken ?? tokens?.accessToken
         tokens = nil
+        generation += 1
         refreshTask?.cancel()
         refreshTask = nil
         try? tokenStore.delete()
@@ -139,28 +154,38 @@ public actor GoogleAuthorizer {
     }
 
     private func refreshedTokens(from current: OAuthTokens) async throws -> OAuthTokens {
-        // Concurrent callers share one refresh.
-        if let refreshTask { return try await refreshTask.value }
-        guard let refreshToken = current.refreshToken else { throw GoogleAuthError.signInRequired }
-
-        let task = Task {
-            let response = try await tokenRequest([
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refreshToken),
-            ])
-            return response.tokens(issuedAt: now(), previous: current)
+        // Concurrent callers share one refresh and see the same outcome.
+        let task: Task<OAuthTokens, any Error>
+        if let refreshTask {
+            task = refreshTask
+        } else {
+            guard let refreshToken = current.refreshToken else { throw GoogleAuthError.signInRequired }
+            let startedIn = generation
+            task = Task {
+                let response = try await tokenRequest([
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refreshToken),
+                ])
+                // A sign-out or new sign-in while waiting wins over this refresh.
+                guard generation == startedIn else { throw GoogleAuthError.signInRequired }
+                let refreshed = response.tokens(issuedAt: now(), previous: current)
+                try tokenStore.save(refreshed)
+                tokens = refreshed
+                return refreshed
+            }
+            refreshTask = task
         }
-        refreshTask = task
-        defer { refreshTask = nil }
+        defer { if refreshTask == task { refreshTask = nil } }
+
         do {
-            let refreshed = try await task.value
-            try tokenStore.save(refreshed)
-            tokens = refreshed
-            return refreshed
+            return try await task.value
         } catch GoogleAuthError.tokenRequestFailed(let message) where message.hasPrefix("invalid_grant") {
             // The refresh token was revoked or expired (7 days for apps in testing mode).
-            tokens = nil
-            try? tokenStore.delete()
+            if tokens != nil {
+                tokens = nil
+                generation += 1
+                try? tokenStore.delete()
+            }
             throw GoogleAuthError.signInRequired
         }
     }

@@ -23,6 +23,7 @@ final class PickerImportModel: Identifiable {
     private(set) var phase: Phase = .starting
     private(set) var items: [PickedMediaItem] = []
     private(set) var preview = SyncPreview.newAlbum
+    private(set) var previewError: String?
     private(set) var progress = TransferProgress(total: 0)
 
     private let client: GooglePhotosPickerClient
@@ -76,7 +77,13 @@ final class PickerImportModel: Identifiable {
     }
 
     func updatePreview() async {
-        preview = (try? await sync.preview(albumTitle: albumTitle, itemIDs: items.map(\.id))) ?? .newAlbum
+        do {
+            preview = try await sync.preview(albumTitle: albumTitle, itemIDs: items.map(\.id))
+            previewError = nil
+        } catch {
+            preview = .newAlbum
+            previewError = error.localizedDescription
+        }
     }
 
     func start() {
@@ -87,18 +94,13 @@ final class PickerImportModel: Identifiable {
 
         task = Task {
             defer { task = nil }
-            let (updates, continuation) = AsyncStream.makeStream(of: TransferProgress.self,
-                                                                 bufferingPolicy: .bufferingNewest(1))
-            let consumer = Task { for await update in updates { progress = update } }
-            defer { consumer.cancel() }
             do {
-                let report = try await sync.run(sessionID: session.id, items: items, listedAt: listedAt,
-                                                albumTitle: title) { continuation.yield($0) }
-                continuation.finish()
-                await consumer.value
+                let report = try await withProgressUpdates({ self.progress = $0 }) { report in
+                    try await sync.run(sessionID: session.id, items: items, listedAt: listedAt,
+                                       albumTitle: title, progress: report)
+                }
                 phase = .finished(report)
             } catch {
-                continuation.finish()
                 fail(error)
             }
         }
@@ -118,7 +120,7 @@ final class PickerImportModel: Identifiable {
     }
 
     private func fail(_ error: any Error) {
-        phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        phase = .failed(error.localizedDescription)
         onError(error)
     }
 }

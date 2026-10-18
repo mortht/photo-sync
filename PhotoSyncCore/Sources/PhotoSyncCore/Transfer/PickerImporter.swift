@@ -8,8 +8,8 @@ public struct PickerImporter: Sendable {
     private let client: GooglePhotosPickerClient
     private let temporaryDirectory: URL
     private let now: @Sendable () -> Date
-    /// Re-list items before their `baseUrl`s expire after 60 minutes.
-    static let refreshAfter: TimeInterval = 50 * 60
+    /// Re-list items ten minutes before their `baseUrl`s expire.
+    static let refreshAfter = TimeInterval(GooglePhotosPickerClient.baseURLLifetime.components.seconds) - 10 * 60
 
     public init(client: GooglePhotosPickerClient,
                 temporaryDirectory: URL = FileManager.default.temporaryDirectory,
@@ -69,15 +69,16 @@ public struct PickerImporter: Sendable {
                 report.importedItems[item.id] = [assetID]
                 state.added += 1
                 try await ledger?.record(itemID: item.id, contentHash: nil, destinationIDs: [assetID])
-            } catch is CancellationError {
-                report.wasCancelled = true
-                break
             } catch let error as SyncStoreError {
                 throw error
             } catch {
-                report.failures.append(TransferFailure(
-                    itemID: item.id, fileName: item.fileName,
-                    message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+                // Downloads report cancellation as URLError(.cancelled).
+                if Task.isCancelled || error is CancellationError {
+                    report.wasCancelled = true
+                    break
+                }
+                report.failures.append(TransferFailure(itemID: item.id, fileName: item.fileName,
+                                                       message: error.localizedDescription))
                 state.failed += 1
             }
             state.processed += 1
@@ -126,24 +127,13 @@ public struct PickerToAppleSync: Sendable {
         progress: @Sendable (TransferProgress) -> Void = { _ in }
     ) async throws -> ImportReport {
         let title = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = Self.key(forAlbumTitle: title)
-        var albumID: String?
-        if let pair = try await store.pair(direction: .pickerToApple, sourceAlbumID: key),
-           await destination.albumExists(id: pair.destinationAlbumID) {
-            albumID = pair.destinationAlbumID
-        }
-        let targetID: String
-        if let albumID {
-            targetID = albumID
-        } else {
-            targetID = try await destination.createAlbum(title: title)
-        }
-        let pair = try await store.linkPair(direction: .pickerToApple, sourceAlbumID: key, sourceAlbumTitle: title,
-                                            destinationAlbumID: targetID, destinationAlbumTitle: title)
+        let target = try await SyncTarget.resolve(
+            store: store, direction: .pickerToApple, sourceAlbumID: Self.key(forAlbumTitle: title),
+            sourceAlbumTitle: title, forceNewAlbum: false, destination: destination, newAlbumTitle: title)
         let report = try await importer.importItems(
-            items, listedAt: listedAt, sessionID: sessionID, intoAlbumID: targetID, albumTitle: title,
-            into: destination, ledger: AlbumSyncLedger(store: store, pairID: pair.id), progress: progress)
-        if !report.wasCancelled { try await store.markSynced(pairID: pair.id) }
+            items, listedAt: listedAt, sessionID: sessionID, intoAlbumID: target.album.id,
+            albumTitle: target.album.title, into: destination, ledger: target.ledger, progress: progress)
+        try await target.complete(wasCancelled: report.wasCancelled)
         return report
     }
 }

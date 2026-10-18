@@ -30,7 +30,7 @@ struct TransferSheet: View {
             Form {
                 LabeledContent("Items", value: AlbumRow<EmptyView>.countSummary(
                     photos: model.album.photoCount, videos: model.album.videoCount))
-                SyncTargetSection(preview: model.preview, totalItems: model.items.count,
+                SyncTargetSection(preview: model.preview, previewError: model.previewError, totalItems: model.items.count,
                                   titleLabel: "Google album name", title: $model.targetTitle,
                                   forceNewAlbum: $model.forceNewAlbum)
             }
