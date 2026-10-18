@@ -71,8 +71,8 @@ final class PickerImportModel: Identifiable {
     }
 
     func openPicker() {
-        guard let session else { return }
-        NSWorkspace.shared.open(session.autoclosePickerURL)
+        guard let url = session?.autoclosePickerURL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func updatePreview() async {

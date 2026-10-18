@@ -54,7 +54,7 @@ public struct PickerImporter: Sendable {
                 listedAt = now()
             }
             let item = fresh[original.id] ?? original
-            state.currentFileName = item.mediaFile.filename
+            state.currentFileName = item.fileName
             progress(state)
 
             let workDirectory = temporaryDirectory.appending(path: "PhotoSync-\(UUID().uuidString)",
@@ -76,7 +76,7 @@ public struct PickerImporter: Sendable {
                 throw error
             } catch {
                 report.failures.append(TransferFailure(
-                    itemID: item.id, fileName: item.mediaFile.filename,
+                    itemID: item.id, fileName: item.fileName,
                     message: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
                 state.failed += 1
             }

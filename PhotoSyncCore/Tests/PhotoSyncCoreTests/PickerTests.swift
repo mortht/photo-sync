@@ -73,7 +73,7 @@ final class FakePicker: @unchecked Sendable {
 
         let session = try await client.createSession()
         #expect(session.id == "s1")
-        #expect(session.autoclosePickerURL.absoluteString == "https://photos.google.com/picker/s1/autoclose")
+        #expect(session.autoclosePickerURL?.absoluteString == "https://photos.google.com/picker/s1/autoclose")
         #expect(session.expireTime != nil)
         let body = try #require(picker.http.requests.first).bodyJSON
         #expect((body["pickingConfig"] as? [String: Any])?["maxItemCount"] as? String == "2000")
@@ -125,6 +125,37 @@ final class FakePicker: @unchecked Sendable {
         let item = try #require(try await client.mediaItems(sessionID: "s1").first)
         await #expect(throws: PickerError.videoNotReady) {
             try await client.download(item, into: FileManager.default.temporaryDirectory)
+        }
+    }
+
+    @Test func sparsePollAndItemResponsesStillWork() async throws {
+        let http = MockHTTPClient { recorded in
+            switch recorded.path {
+            case "/v1/sessions/s1": .json(#"{"mediaItemsSet":true}"#)
+            case "/v1/mediaItems":
+                .json(#"{"mediaItems":[{"id":"abcdefghijklmnopqrstuvwxyz","mediaFile":{"baseUrl":"https://lh3.googleusercontent.com/x","mimeType":"video/mp4"}},{"id":"p1","mediaFile":{"baseUrl":"https://lh3.googleusercontent.com/y"}}]}"#)
+            default: .init(status: 404)
+            }
+        }
+        let client = Self.client(http)
+        let start = PickerSession(id: "s1", pickerUri: URL(string: "https://photos.google.com/picker/s1"),
+                                  pollingConfig: nil, expireTime: nil, mediaItemsSet: false)
+        let picked = try await client.waitForPicking(start) { _ in }
+        #expect(picked.isPicked)
+        #expect(picked.id == "s1")
+        #expect(picked.pickerUri == nil)
+
+        let items = try await client.mediaItems(sessionID: "s1")
+        #expect(items[0].kind == .video)
+        #expect(items[0].fileName == "abcdefghijklmnop.mp4")
+        #expect(items[1].kind == .photo)
+        #expect(items[1].fileName == "p1.jpg")
+    }
+
+    @Test func decodeErrorsNameTheField() async throws {
+        let http = MockHTTPClient { _ in .json(#"{"mediaItems":[{"id":"a","mediaFile":{"mimeType":"image/jpeg"}}]}"#) }
+        await #expect(throws: PickerError.unexpectedResponse("“mediaItems[0].mediaFile.baseUrl” is missing")) {
+            try await Self.client(http).mediaItems(sessionID: "s1")
         }
     }
 
