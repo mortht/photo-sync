@@ -7,8 +7,8 @@ accounts, browse albums on each side, and copy an album across.
 > Status: early development. The album browser lists Apple Photos albums
 > (including Shared Albums) and scanned Google Takeout exports. It copies
 > Apple albums to new Google Photos albums and imports Takeout albums into
-> Apple Photos. Picker import and incremental sync are next. See the
-> [roadmap](#roadmap).
+> Apple Photos, adding only new items when an album is copied again. The
+> Picker import is next. See the [roadmap](#roadmap).
 
 ## Platform constraints
 
@@ -53,6 +53,7 @@ PhotoSyncCore/            Swift package, platform-independent, unit-tested
                           Photos Library API client with retry/backoff
     Transfer/             Album uploader (export → upload → batchCreate),
                           Takeout album importer, image metadata writer
+    Sync/                 SQLite sync history and per-direction coordinators
   Tests/PhotoSyncCoreTests/
 PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
   Apple/                  PhotoKit adapter, exporter, import destination, album pane
@@ -64,7 +65,7 @@ PhotoSync.xcodeproj       App project, depends on the local PhotoSyncCore packag
 Config/                   Build settings, Info.plist keys, entitlements, OAuth secrets
 ```
 
-To come in `PhotoSyncCore`: the Picker REST client and the sync state store.
+To come in `PhotoSyncCore`: the Picker REST client.
 
 ### Apple → Google transfer
 
@@ -79,8 +80,7 @@ version from PhotoKit (edited if edited; Live Photos as stills), uploads the
 bytes, and adds uploaded items with `mediaItems:batchCreate` in batches of
 50. Transient errors (429, 5xx, network) are retried with exponential
 backoff. A 401 triggers one token refresh. Failed items are listed at the
-end rather than aborting the transfer. Running a transfer again currently
-creates a second album; incremental sync comes with the sync store.
+end rather than aborting the transfer.
 
 ### Takeout → Apple import
 
@@ -98,7 +98,23 @@ importer creates a new album with the same name, then adds each item with
   IPTC caption (lossless, JPEG/PNG/TIFF). ImageIO can't write HEIC metadata
   in place, so HEIC items with a description import without it, with a note.
 
-Importing the same album twice adds duplicates; incremental sync will fix that.
+### Incremental sync
+
+Every transfer is recorded in `sync.sqlite` in the app's Application Support
+folder (inside the sandbox container): each source album is linked to the
+album it was copied into, and each item is recorded as soon as it reaches
+the destination. When you copy the same album again, the sheet shows how
+many items were copied before and:
+
+- adds only the new items to the **same** destination album
+- retries items that failed or weren't reached because the run was stopped
+- recognizes a photo in a newer Takeout export by its SHA-256 even when
+  Takeout named it differently (e.g. `IMG(1).jpg`)
+- starts a fresh album if you deleted the earlier one, or if you choose
+  *Copy into a new album instead*
+
+Sync is one-way and additive: items you delete at the destination are not
+copied again, and deletions at the source are not mirrored.
 
 ### Takeout sidecar matching
 
@@ -172,7 +188,7 @@ after 7 days, so you'll need to reconnect about once a week.
 - [x] Google OAuth and Apple → Google album transfer
 - [x] Takeout → Apple import
 - [ ] Picker API import
-- [ ] Incremental sync and polish
+- [x] Incremental sync
 
 ## License
 

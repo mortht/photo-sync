@@ -10,16 +10,18 @@ struct ImportSheet: View {
             Text("Copy “\(model.album.title)” to Apple Photos")
                 .font(.title3.bold())
             switch model.phase {
+            case .loading: ProgressView("Checking sync history…")
             case .ready: setup
             case .running:
-                TransferProgressSection(progress: model.progress, isPreparing: false, onStop: model.cancel)
+                TransferProgressSection(progress: model.progress, onStop: model.cancel)
             case .finished(let report): finished(report)
             case .failed(let message): TransferErrorView(message: message) { dismiss() }
             }
         }
         .padding(20)
         .frame(width: 480)
-        .interactiveDismissDisabled(model.isRunning)
+        .interactiveDismissDisabled(model.isActive)
+        .task { await model.load() }
     }
 
     private var setup: some View {
@@ -33,7 +35,9 @@ struct ImportSheet: View {
                             .help("These items keep the date stored in the file; their location can't be restored.")
                     }
                 }
-                TextField("Apple Photos album name", text: $model.targetTitle)
+                SyncTargetSection(preview: model.preview, totalItems: model.album.assets.count,
+                                  titleLabel: "Apple Photos album name", title: $model.targetTitle,
+                                  forceNewAlbum: $model.forceNewAlbum)
                 if model.hasEditedCopies {
                     Picker("Edited photos", selection: $model.options.editedVersions) {
                         Text("Edited version").tag(EditedVersionPolicy.preferEdited)
@@ -46,7 +50,7 @@ struct ImportSheet: View {
                         .help("Writes the Google Photos description into a copy of each JPEG/PNG before import.")
                 }
             }
-            Text("Creates a new album in Apple Photos and restores dates, locations and favorites from the Takeout metadata. Importing the same album again adds the photos a second time.")
+            Text("Restores dates, locations and favorites from the Takeout metadata. Items imported before are skipped, even from a newer export.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -54,25 +58,32 @@ struct ImportSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Import") { model.start() }
+                Button(model.addsToExistingAlbum ? "Add New Items" : "Import") { model.start() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.targetTitle.trimmingCharacters(in: .whitespaces).isEmpty || model.itemCount == 0)
+                    .disabled(!canStart)
             }
         }
+    }
+
+    private var canStart: Bool {
+        guard model.itemCount > 0 else { return false }
+        if model.addsToExistingAlbum { return model.preview.alreadySyncedCount < model.album.assets.count }
+        return !model.targetTitle.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private func finished(_ report: ImportReport) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             TransferResultLabel(
-                text: "Imported \(model.progress.added) of \(model.progress.total) items into “\(report.albumTitle)”.",
+                text: "Imported \(model.progress.added) items into “\(report.albumTitle)”."
+                    + (report.skippedCount > 0 ? " \(report.skippedCount) were already there." : ""),
                 isComplete: report.failures.isEmpty && !report.wasCancelled
             )
             if report.wasCancelled {
-                Text("The import was stopped. The album contains the items imported so far.")
+                Text("The import was stopped. Run it again to import the remaining items.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            TransferIssueList(title: "Failed", issues: report.failures)
+            TransferIssueList(title: "Failed (retried next time)", issues: report.failures)
             TransferIssueList(title: "Imported with notes", issues: report.warnings)
             HStack {
                 Spacer()

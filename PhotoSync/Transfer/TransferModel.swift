@@ -2,13 +2,14 @@ import Foundation
 import Observation
 import PhotoSyncCore
 
-/// Drives one Apple → Google album transfer.
+/// Drives one Apple → Google album sync.
 @MainActor
 @Observable
 final class TransferModel: Identifiable {
     enum Phase {
+        /// Loading the album's items and sync history.
+        case loading
         case ready
-        case preparing
         case running
         case finished(TransferReport)
         case failed(String)
@@ -16,8 +17,12 @@ final class TransferModel: Identifiable {
 
     let album: AppleAlbum
     var targetTitle: String
-    private(set) var phase: Phase = .ready
+    /// Copy into a fresh album even though an earlier one exists.
+    var forceNewAlbum = false
+    private(set) var phase: Phase = .loading
     private(set) var progress = TransferProgress(total: 0)
+    private(set) var items: [TransferItem] = []
+    private(set) var preview = SyncPreview.newAlbum
 
     @ObservationIgnored private var task: Task<Void, Never>?
 
@@ -25,29 +30,41 @@ final class TransferModel: Identifiable {
 
     var isActive: Bool {
         switch phase {
-        case .preparing, .running: true
+        case .loading, .running: true
         default: false
         }
     }
+
+    /// Whether the run adds to an album from an earlier sync.
+    var addsToExistingAlbum: Bool { preview.existingAlbumTitle != nil && !forceNewAlbum }
+    var newItemCount: Int { addsToExistingAlbum ? items.count - preview.alreadySyncedCount : items.count }
 
     init(album: AppleAlbum) {
         self.album = album
         targetTitle = album.title
     }
 
+    func load(client: GooglePhotosLibraryClient?) async {
+        let albumID = album.id
+        items = await Task.detached(priority: .userInitiated) {
+            PhotoKitAlbums.transferItems(inAlbum: albumID)
+        }.value
+        if let client {
+            // Without history (or offline) this simply offers a new album.
+            preview = (try? await AppleToGoogleSync(store: AppSync.store, client: client)
+                .preview(sourceAlbumID: albumID, itemIDs: items.map(\.id))) ?? .newAlbum
+        }
+        phase = .ready
+    }
+
     func start(client: GooglePhotosLibraryClient, onError: @escaping (any Error) -> Void) {
         guard task == nil else { return }
         let title = targetTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let albumID = album.id
-        phase = .preparing
+        let (album, items, forceNewAlbum) = (album, items, forceNewAlbum)
+        progress = TransferProgress(total: items.count)
+        phase = .running
 
         task = Task {
-            let items = await Task.detached(priority: .userInitiated) {
-                PhotoKitAlbums.transferItems(inAlbum: albumID)
-            }.value
-            progress = TransferProgress(total: items.count)
-            phase = .running
-
             // An ordered stream keeps progress updates from arriving out of order.
             let (updates, continuation) = AsyncStream.makeStream(of: TransferProgress.self,
                                                                  bufferingPolicy: .bufferingNewest(1))
@@ -55,8 +72,9 @@ final class TransferModel: Identifiable {
             defer { consumer.cancel() }
 
             do {
-                let report = try await GoogleAlbumUploader(client: client).transfer(
-                    items, toNewAlbumTitled: title, from: PhotoKitTransferSource()
+                let report = try await AppleToGoogleSync(store: AppSync.store, client: client).run(
+                    sourceAlbumID: album.id, sourceAlbumTitle: album.title, items: items,
+                    newAlbumTitle: title, forceNewAlbum: forceNewAlbum, from: PhotoKitTransferSource()
                 ) { continuation.yield($0) }
                 continuation.finish()
                 await consumer.value

@@ -23,6 +23,10 @@ struct PhotoKitImportDestination: PhotoLibraryDestination {
         return id
     }
 
+    func albumExists(id: String) async -> Bool {
+        PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject != nil
+    }
+
     func importAsset(_ request: AssetImportRequest, intoAlbum albumID: String) async throws -> String {
         let box = IdentifierBox()
         try await PHPhotoLibrary.shared().performChanges {

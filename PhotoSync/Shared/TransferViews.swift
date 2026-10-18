@@ -4,23 +4,23 @@ import SwiftUI
 /// Progress bar with the current file and a Stop button.
 struct TransferProgressSection: View {
     let progress: TransferProgress
-    let isPreparing: Bool
     let onStop: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isPreparing {
-                ProgressView("Preparing…")
-            } else {
-                ProgressView(value: progress.fractionCompleted) {
-                    Text("\(progress.completed) of \(progress.total) items")
-                } currentValueLabel: {
-                    Text(progress.currentFileName ?? " ")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            ProgressView(value: progress.fractionCompleted) {
+                Text("\(progress.completed) of \(progress.total) items")
+            } currentValueLabel: {
+                Text(progress.currentFileName ?? " ")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             HStack {
+                if progress.skipped > 0 {
+                    Text("\(progress.skipped) already copied")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
                 if progress.failed > 0 {
                     Label("\(progress.failed) failed", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
