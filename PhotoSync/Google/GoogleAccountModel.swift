@@ -75,6 +75,14 @@ final class GoogleAccountModel {
         }
     }
 
+    /// A Picker API client using this account's tokens.
+    func pickerClient() -> GooglePhotosPickerClient? {
+        guard let authorizer, isSignedIn else { return nil }
+        return GooglePhotosPickerClient { forceRefresh in
+            try await authorizer.accessToken(forceRefresh: forceRefresh)
+        }
+    }
+
     /// Call when an API call failed; drops to signed-out if the session expired.
     func noteFailure(_ error: any Error) {
         if (error as? GoogleAuthError) == .signInRequired { state = .signedOut }

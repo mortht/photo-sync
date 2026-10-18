@@ -7,8 +7,8 @@ accounts, browse albums on each side, and copy an album across.
 > Status: early development. The album browser lists Apple Photos albums
 > (including Shared Albums) and scanned Google Takeout exports. It copies
 > Apple albums to new Google Photos albums and imports Takeout albums into
-> Apple Photos, adding only new items when an album is copied again. The
-> Picker import is next. See the [roadmap](#roadmap).
+> Apple Photos (from Takeout or the Google Photos Picker), adding only new
+> items when an album is copied again. See the [roadmap](#roadmap).
 
 ## Platform constraints
 
@@ -27,8 +27,9 @@ The design follows from what the two platforms actually allow:
   The app creates a session, opens `pickerUri`, polls `sessions.get` until
   `mediaItemsSet`, lists the picked `mediaItems`, and downloads them via
   `baseUrl` + `=d` (photos) / `=dv` (videos) with the bearer token. It returns
-  no album information. Limits still to be verified: ~2000 items per
-  session, `baseUrl` valid ~60 minutes, unclear support for shared albums.
+  no album information. A session allows up to 2000 items, `baseUrl`s are
+  valid for 60 minutes, and `=d` downloads have their location removed.
+  Whether shared albums can be picked from is not verified yet.
 - **Google Takeout** exports albums as folders, `Takeout/Google Photos/<Album>/`,
   with an album `metadata.json` and a sidecar JSON per item. The sidecar holds
   the capture time, location and description, which are **not** embedded in
@@ -50,9 +51,9 @@ PhotoSyncCore/            Swift package, platform-independent, unit-tested
   Sources/PhotoSyncCore/
     Takeout/              Takeout scanner, sidecar matcher, metadata parsing
     Google/               OAuth (PKCE + loopback redirect), Keychain token store,
-                          Photos Library API client with retry/backoff
+                          Photos Library and Picker API clients with retry/backoff
     Transfer/             Album uploader (export → upload → batchCreate),
-                          Takeout album importer, image metadata writer
+                          Takeout and Picker importers, image metadata writer
     Sync/                 SQLite sync history and per-direction coordinators
   Tests/PhotoSyncCoreTests/
 PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
@@ -64,8 +65,6 @@ PhotoSync/                macOS app (SwiftUI); file-system-synchronized group
 PhotoSync.xcodeproj       App project, depends on the local PhotoSyncCore package
 Config/                   Build settings, Info.plist keys, entitlements, OAuth secrets
 ```
-
-To come in `PhotoSyncCore`: the Picker REST client.
 
 ### Apple → Google transfer
 
@@ -97,6 +96,22 @@ importer creates a new album with the same name, then adds each item with
   description is written into a copy of the file as XMP `dc:description` /
   IPTC caption (lossless, JPEG/PNG/TIFF). ImageIO can't write HEIC metadata
   in place, so HEIC items with a description import without it, with a note.
+
+### Google Photos Picker → Apple import
+
+*Pick from Google Photos…* in the toolbar creates a Picker session and
+opens the picker in your browser. After you confirm your selection, the
+app lists the picked items and you name the Apple Photos album to import
+them into. Items are downloaded (`=d` for photos, `=dv` for videos, which
+Google delivers transcoded) and imported with their capture date. If a large
+import runs close to the 60-minute `baseUrl` lifetime, items are listed
+again to get fresh URLs. Videos that Google is still processing fail with a
+note and can be picked again later.
+
+Google strips location from Picker downloads and returns no descriptions,
+so use Takeout when those matter. Sync history is kept per target album
+name: picking the same items into an album with the same name again skips
+them.
 
 ### Incremental sync
 
@@ -187,7 +202,7 @@ after 7 days, so you'll need to reconnect about once a week.
 - [x] PhotoKit album listing in the UI (albums, folders, Shared Albums)
 - [x] Google OAuth and Apple → Google album transfer
 - [x] Takeout → Apple import
-- [ ] Picker API import
+- [x] Picker API import
 - [x] Incremental sync
 
 ## License

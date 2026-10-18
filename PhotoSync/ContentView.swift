@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var google = GoogleAccountModel()
     @State private var transfer: TransferModel?
     @State private var takeoutImport: ImportModel?
+    @State private var pickerImport: PickerImportModel?
     @State private var syncStatus = SyncStatusModel()
 
     var body: some View {
@@ -23,6 +24,19 @@ struct ContentView: View {
         .frame(minWidth: 720, minHeight: 480)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                Button {
+                    guard let client = google.pickerClient() else { return }
+                    pickerImport = PickerImportModel(client: client, onError: google.noteFailure)
+                } label: {
+                    Label("Pick from Google Photos…", systemImage: "photo.badge.plus")
+                }
+                .disabled(!google.isSignedIn || !apple.hasAccess)
+                .help(google.isSignedIn
+                      ? (apple.hasAccess ? "Pick photos in Google Photos and import them into Apple Photos"
+                                         : "Allow Photos access first")
+                      : "Connect your Google account first")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 GoogleAccountButton(model: google)
             }
         }
@@ -32,6 +46,9 @@ struct ContentView: View {
         }
         .sheet(item: $transfer, onDismiss: refreshSyncStatus) { transfer in
             TransferSheet(model: transfer, google: google)
+        }
+        .sheet(item: $pickerImport) { pickerImport in
+            PickerImportSheet(model: pickerImport)
         }
         .sheet(item: $takeoutImport, onDismiss: refreshSyncStatus) { takeoutImport in
             ImportSheet(model: takeoutImport)
